@@ -1,0 +1,20 @@
+[
+  {
+    "title": "Junior Python Developer",
+    "company": "Example GmbH",
+    "location": "Berlin",
+    "arrangement": "hybrid",
+    "source": "example fixture",
+    "source_url": "https://example.invalid/jobs/junior-python",
+    "requirements": [
+      {
+        "text": "Python",
+        "kind": "mandatory"
+      },
+      {
+        "text": "Git",
+        "kind": "preferred"
+      }
+    ]
+  }
+]

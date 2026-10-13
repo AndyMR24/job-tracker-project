@@ -1,0 +1,144 @@
+{
+  "_instructions": "Template only. Copy this file to data/profile.json and replace every placeholder with your own facts; the application reads the documented keys below. data/profile.json is ignored by Git.",
+  "identity": {
+    "name": "Sample Candidate",
+    "city": "Berlin, Germany"
+  },
+  "contact": {
+    "phone": "+49 000 0000000",
+    "email": "sample.candidate@example.invalid",
+    "github": "https://github.com/example-user/",
+    "linkedin": "https://www.linkedin.com/in/example-user/"
+  },
+  "education": [
+    {
+      "level": "bachelor",
+      "degree": "Bachelor of Science in Your Subject",
+      "institution": "Example University",
+      "period": "October 2019 - November 2025",
+      "detail": "Minor in Your Minor."
+    },
+    {
+      "level": "additional education",
+      "degree": "Introductory course in Your Subject",
+      "institution": "Example Institute",
+      "period": "February 2018 - June 2018",
+      "detail": "Additional education; not a degree."
+    }
+  ],
+  "professional_experience": false,
+  "skills": [
+    {
+      "name": "Python",
+      "evidence": "Describe the coursework, projects or practice that supports this skill."
+    },
+    {
+      "name": "SQL",
+      "evidence": "Example evidence for this skill."
+    },
+    {
+      "name": "Git",
+      "evidence": "Example evidence for this skill."
+    },
+    {
+      "name": "pandas",
+      "evidence": "Example evidence for this skill."
+    },
+    {
+      "name": "scikit-learn",
+      "evidence": "Example evidence for this skill."
+    },
+    {
+      "name": "pytest",
+      "evidence": "Example evidence for this skill."
+    }
+  ],
+  "thesis": {
+    "name": "Your Thesis Title",
+    "technologies": [
+      "Python",
+      "SQL"
+    ],
+    "description": "One or two sentences about your thesis.",
+    "candidate_bullets": [
+      "Example thesis bullet that names a tool.",
+      "Example thesis bullet describing the method."
+    ],
+    "general_bullets": [
+      "Example general thesis bullet.",
+      "Example general thesis bullet.",
+      "Example general thesis bullet."
+    ]
+  },
+  "projects": [
+    {
+      "name": "Your Thesis Title",
+      "technologies": [
+        "Python",
+        "SQL"
+      ],
+      "candidate_bullets": [
+        "Example thesis bullet that names a tool.",
+        "Example thesis bullet describing the method."
+      ],
+      "general_bullets": [
+        "Example general thesis bullet.",
+        "Example general thesis bullet.",
+        "Example general thesis bullet."
+      ]
+    },
+    {
+      "name": "Example Project One",
+      "technologies": [
+        "Python",
+        "pandas",
+        "scikit-learn"
+      ],
+      "candidate_bullets": [
+        "Example project bullet that names a tool.",
+        "Example project bullet describing the approach.",
+        "Example project bullet describing the evaluation.",
+        "Example project bullet describing the documentation."
+      ],
+      "general_bullets": [
+        "Example general project bullet.",
+        "Example general project bullet.",
+        "Example general project bullet."
+      ]
+    },
+    {
+      "name": "Example Project Two",
+      "technologies": [
+        "SQL",
+        "Python"
+      ],
+      "candidate_bullets": [
+        "Example dashboard bullet that names a tool.",
+        "Example dashboard bullet describing the output."
+      ],
+      "general_bullets": [
+        "Example general dashboard bullet.",
+        "Example general dashboard bullet.",
+        "Example general dashboard bullet."
+      ]
+    }
+  ],
+  "technical_practice": {
+    "Python": "Describe how you practise this technology.",
+    "SQL": "Describe how you practise this technology.",
+    "Web Development": "Describe how you practise this technology."
+  },
+  "languages": {
+    "English": "Fluent",
+    "German": "Intermediate"
+  },
+  "certifications": [
+    "Example Certificate"
+  ],
+  "employment_eligibility": {
+    "country_of_residence": "Germany",
+    "residence_permit_wording": "State any work-authorisation wording from your documents here.",
+    "note": "Posting-specific authorization or sponsorship requirements require verification; this is not legal advice."
+  },
+  "availability": "As soon as possible"
+}

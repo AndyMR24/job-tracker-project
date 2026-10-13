@@ -1,0 +1,26 @@
+# Python bytecode and test caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Virtual environments and packaging artefacts
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# Local credentials
+.env
+
+# Local personal configuration and documents.
+# Copy data/profile.example.json and data/search_config.example.json instead of committing these.
+data/profile.json
+data/search_config.json
+MASTER_PROFILE.md
+SOURCE_CV.pdf
+
+# Local runtime data, archived databases and generated output
+*.sqlite3
+archive/
+output/

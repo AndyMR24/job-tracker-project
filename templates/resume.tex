@@ -1,0 +1,50 @@
+\documentclass[a4paper,11pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[margin=18mm]{geometry}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{lmodern}
+\usepackage[hidelinks]{hyperref}
+\pagestyle{empty}
+\setlength{\parindent}{0pt}
+\setlist[itemize]{leftmargin=5mm, itemsep=0pt, topsep=1pt, parsep=0pt}
+\titleformat{\section}{\large\bfseries\raggedright}{}{0pt}{}[\vspace{2pt}\titlerule\vspace{3pt}]
+\titlespacing*{\section}{0pt}{5pt}{5pt}
+\newcommand{\CVEducation}[4]{\textbf{#1}\\[0pt]#2 \hfill #3\\[0pt]#4\par\vspace{6pt}}
+\newcommand{\CVBullet}[1]{\item #1}
+\newcommand{\CVProject}[3]{\textbf{#1} \textbar{} \textit{#2}\\[-12pt]\begin{itemize}[leftmargin=5mm, itemsep=0pt, topsep=0pt, parsep=0pt]#3\end{itemize}\vspace{4pt}}
+\newcommand{\CVLanguage}[2]{#1: #2\\}
+\newcommand{\CVItem}[1]{\item #1}
+\begin{document}
+\begin{center}
+{\LARGE\textbf{{{NAME}}}}\\[3pt]
+{{CITY}}\\[2pt]
+{{CONTACT_PRIMARY}}\\[2pt]
+{{CONTACT_SOCIAL}}
+\end{center}
+
+\section*{Education}
+{{EDUCATION}}
+\section*{{{PROJECT_HEADING}}}
+{{THESIS}}
+{{PROJECTS}}
+\section*{Technical Skills}
+{{SKILLS}}
+
+\vspace{5pt}
+
+\noindent
+\begin{minipage}[t]{0.47\textwidth}
+    \section*{Languages}
+    {{LANGUAGES}}
+\end{minipage}
+\hfill
+\begin{minipage}[t]{0.47\textwidth}
+    \section*{Certifications}
+    \begin{itemize}[leftmargin=5mm, itemsep=0pt, topsep=0pt, parsep=0pt]
+        {{CERTIFICATIONS}}
+    \end{itemize}
+\end{minipage}
+
+\end{document}

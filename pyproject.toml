@@ -1,0 +1,19 @@
+[project]
+name = "job-searching-agent"
+version = "0.1.0"
+description = "A local-first CLI for discovering and tracking jobs."
+requires-python = ">=3.11"
+dependencies = ["geonamescache>=2.0"]
+
+[project.optional-dependencies]
+test = ["pypdf>=5.0"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["job_agent*"]
+
+[project.scripts]
+job-agent = "job_agent.cli:main"

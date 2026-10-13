@@ -1,0 +1,41 @@
+{
+  "_instructions": "Template only. Copy this file to data/search_config.json and adjust the target roles, locations, queries and commute radius to your own preferences. data/search_config.json is ignored by Git.",
+  "target_roles": [
+    "Data Analyst",
+    "Data Scientist",
+    "Data Engineer",
+    "Machine Learning Engineer",
+    "Python Developer",
+    "Software Developer"
+  ],
+  "locations": [
+    "Berlin",
+    "Potsdam"
+  ],
+  "work_arrangements": [
+    "remote",
+    "hybrid",
+    "onsite"
+  ],
+  "maximum_commute_note": "Describe your commute limit here; it is informational only.",
+  "location_preferences": {
+    "origin": "Berlin",
+    "max_distance_km": 225,
+    "remote_only_beyond_distance": true
+  },
+  "master_cv_path": "SOURCE_CV.pdf",
+  "preferred_languages": [
+    "Python"
+  ],
+  "search_queries": {
+    "primary": [
+      "Data Analyst",
+      "Junior Data Analyst",
+      "Python Developer"
+    ],
+    "secondary": [
+      "Data Consultant",
+      "IT Consultant"
+    ]
+  }
+}
