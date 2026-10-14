@@ -4,8 +4,8 @@ A local-first Python application for finding and tracking jobs in Germany. It se
 sources, evaluates every listing against your own profile and preferences, explains why a job does or
 does not fit, records your decisions and application progress, and drafts truthful job-specific CVs.
 
-It never submits an application, never contacts employers, and never sends your profile or CV to any
-service.
+It never submits an application and never contacts employers. The current application code does not
+send your profile or CV content to external services.
 
 ## What it does
 
@@ -27,24 +27,9 @@ service.
 
 ## Architecture summary
 
-```
-job_agent/
-  cli.py          command line entry point (job-agent ...)
-  discovery.py    public-search orchestration and the normalize/evaluate/store pipeline
-  profile.py      profile and search-configuration loading and validation
-  normalizer.py   conservative mapping of raw listings into the internal Job model
-  evaluator.py    transparent rule-based fit evaluation
-  location.py     offline city resolution, radius checks, country-restriction interpretation
-  storage.py      local SQLite persistence and audit events
-  cv.py           LaTeX CV drafts built only from profile facts
-  permissions.py  gate for future external actions; application submission is always blocked
-  maintenance.py  re-evaluation of already-stored jobs (job-agent re-evaluate)
-  dashboard.py    read-only projections for the web interface
-  webui.py        server-rendered HTML for the web interface
-  webapp.py       local HTTP server for the web interface
-  adzuna.py, nomado24.py, himalayas.py, ba.py   public job sources
-  search.py       legacy, inactive DuckDuckGo helper
-```
+The implementation is a small `job_agent/` package: a CLI, one shared discovery pipeline, an
+explainable rule-based evaluator, local SQLite storage, LaTeX CV generation and four public source
+adapters. [DEVELOPMENT.md](DEVELOPMENT.md) maps every module and explains the design decisions.
 
 The CLI is the reference interface; the dashboard reuses the same modules rather than duplicating
 logic.
@@ -60,7 +45,7 @@ logic.
 
 ```bash
 git clone <your-fork-url>
-cd job-tracking-agent
+cd job-tracker-project
 python -m pip install -e .
 ```
 
@@ -71,11 +56,10 @@ cp data/profile.example.json data/profile.json
 cp data/search_config.example.json data/search_config.json
 ```
 
-- `data/profile.json` holds your factual profile (identity, contact, education, skills, projects,
-  thesis, languages, certifications, employment eligibility). Replace every placeholder with your
-  own facts; never add facts you cannot support.
-- `data/search_config.json` holds your preferences (target roles, locations, work arrangements,
-  commute radius, search queries and `preferred_languages`).
+`data/profile.json` holds the facts about you that the application may use, and
+`data/search_config.json` holds your search preferences. Both files are ignored by Git, so a fresh
+clone contains only the tracked examples. Replace every placeholder with facts you can support and
+never add facts the profile cannot back; [USER_MANUAL.md](USER_MANUAL.md) explains every field.
 
 Adzuna credentials are read from the environment or from a local `.env` file in the project root:
 
@@ -84,13 +68,20 @@ ADZUNA_APP_ID=your-adzuna-app-id
 ADZUNA_APP_KEY=your-adzuna-app-key
 ```
 
+Use exactly those two variable names. Credentials are needed only for Adzuna: without them a search
+skips Adzuna - reporting the skip - and continues with the other configured sources, while an
+Adzuna-only search explains that nothing was searched. Everything else works without them, and
+`job-agent validate` does not check them. Credentials that Adzuna rejects are treated as a request
+failure rather than a missing source; [USER_MANUAL.md](USER_MANUAL.md) explains what each interface
+shows.
+
 Check everything with `job-agent validate`.
 
 ## Usage - CLI
 
 | Command | Purpose |
 | --- | --- |
-| `job-agent validate` | check the profile, search configuration and master CV path |
+| `job-agent validate` | check the profile and search configuration |
 | `job-agent search` | run every configured query against all sources |
 | `job-agent search --query "Data Analyst" --source ba` | run one query against one source |
 | `job-agent ingest jobs.json` | import public listings you saved yourself |
@@ -115,15 +106,22 @@ sorting, job detail with the full evaluation and the original posting link, save
 saved jobs, application tracking, search history, source statistics, background searches and CV
 generation with PDF download.
 
-It binds to `127.0.0.1` by default and has no authentication, so keep it local. Widen the binding
-with `--host` only if you understand that your local data becomes reachable on that network.
+It binds to `127.0.0.1` by default, has no authentication and rejects cross-origin form posts as
+CSRF hardening rather than access control, so keep it local. Widen the binding with `--host` only if
+you understand that your local data becomes reachable on that network.
 
 ## Data, privacy and limitations
 
-- Everything is local: `data/job_agent.sqlite3` for jobs, decisions, applications, CV metadata and
-  audit events, and `output/` for generated CV drafts. Both are ignored by Git.
-- Only public search text, an optional location filter and (for Adzuna) your API keys leave your
-  machine. Your profile, CV and local records are never transmitted.
+- Your local state stays in the checkout: `data/job_agent.sqlite3` for jobs, decisions,
+  applications, CV metadata and audit events, and `output/` for generated CV drafts. Both are
+  ignored by Git. CV drafts are rendered locally with `pdflatex`; a LaTeX distribution that installs
+  missing packages may contact a package repository on its own, and that traffic carries no
+  candidate data.
+- Searches through the four configured sources send the public query text, an optional location
+  filter, your Adzuna credentials and the static public key the Bundesagentur adapter uses. The
+  requests also carry a generic `User-Agent`, and the services you query see ordinary network
+  metadata such as your IP address. No request contains your profile, CV content or database
+  records.
 - No credentials are stored in the database and application submission is always blocked.
 - Fit scores describe how well a listing matches your profile and preferences. They are not a
   hiring probability, and nothing here is legal advice.
@@ -136,19 +134,19 @@ python -m pip install -e .[test]
 python -m unittest discover -s tests
 ```
 
-The suite uses synthetic fixtures (`tests/support.py`), temporary databases and stub source
-adapters, so it needs no personal data, no credentials and no network access. CV tests that shell
-out to LaTeX are skipped when `pdflatex` is unavailable.
+GitHub Actions runs the same suite on Python 3.11 and 3.12. The tests use synthetic fixtures and
+temporary databases, so they need no personal data, credentials or network access.
+[DEVELOPMENT.md](DEVELOPMENT.md) describes the test strategy, including which tests need a working
+`pdflatex` and why a local Windows run can differ from CI.
 
 ## Project documents
 
-- `USER_MANUAL.md` - the full walkthrough for using the application.
-- `DEVELOPMENT.md` - architecture notes, conventions and development workflow.
-- `SPECIFICATION.md` - the original requirements this implementation follows.
-- `PROGRESS.md` - verified state, remaining work and known limitations.
+- [USER_MANUAL.md](USER_MANUAL.md) - the full walkthrough for using the application.
+- [DEVELOPMENT.md](DEVELOPMENT.md) - architecture, module responsibilities, design decisions and
+  development conventions.
 
 ## Status
 
 An MVP, deliberately small: one evaluator, four public sources, exact URL/job-ID duplicate
-prevention, no browser automation and no automatic applications. A license file is not included yet,
-so choosing a license is still an open decision for the owner.
+prevention, no browser automation and no automatic applications. It is available under the MIT
+license; see `LICENSE`.

@@ -96,6 +96,8 @@ class SearchManager:
             store.audit("search_started", details="dashboard")
             queries = None if mode == "query" else config["search_queries"]["primary"] + config["search_queries"]["secondary"]
             outcome = discovery.collect(self.sources_factory(ROOT), queries=queries, query=query, source=source, location=location, tolerate_errors=True, progress=self._progress)
+            for note in outcome.skipped:
+                self._log(note)
             if not outcome.jobs:
                 self._log("No public listings were returned.")
             records = discovery.store_jobs(store, profile, config, outcome.jobs, on_job=self._stored)
@@ -104,6 +106,8 @@ class SearchManager:
                 summary = "Search finished: %s public result(s), %s stored (%s new, %s known, %s excluded)" % (len(outcome.jobs), len(records), self._state["new"], self._state["known"], self._state["excluded"])
                 if outcome.errors:
                     summary += " - %s source error(s)" % len(outcome.errors)
+                if outcome.skipped:
+                    summary += " - %s" % "; ".join(outcome.skipped)
                 self._state.update({"running": False, "finished_at": timestamp(), "found": len(outcome.jobs), "stored": len(records), "errors": list(outcome.errors), "message": summary})
         except Exception as exc:
             self._log("Search failed: %s" % exc)

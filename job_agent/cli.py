@@ -7,16 +7,16 @@ import os
 import sys
 from pathlib import Path
 
-from .adzuna import AdzunaError, AdzunaSource
-from .ba import BAError, BASource
+from .adzuna import AdzunaError
+from .ba import BAError
 from .cv import generate
-from .discovery import collect, store_jobs
+from .discovery import collect, default_sources, store_jobs
 from .maintenance import refresh_evaluations
 from .permissions import require_external_approval
 from .profile import ValidationError, load_config, load_profile
 from .storage import Store
-from .himalayas import HimalayasError, HimalayasSource
-from .nomado24 import Nomado24Error, Nomado24Source
+from .himalayas import HimalayasError
+from .nomado24 import Nomado24Error
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_PROFILE = ROOT / "data" / "profile.json"
@@ -86,10 +86,13 @@ def main(argv=None):
             if args.command == "ingest": raw_jobs = json.loads(Path(args.file).read_text(encoding="utf-8"))
             else:
                 manual_query = args.query_option or args.query
-                source = AdzunaSource(ROOT / ".env"); store.audit("search_started")
-                source_specs = {"adzuna": (source, True), "nomado24": (Nomado24Source(), True), "himalayas": (HimalayasSource(), False), "ba": (BASource(), True)}
+                store.audit("search_started")
                 queries = None if manual_query else config["search_queries"]["primary"] + config["search_queries"]["secondary"]
-                outcome = collect(source_specs, queries=queries, query=manual_query, source=args.source, location=args.location)
+                outcome = collect(default_sources(ROOT), queries=queries, query=manual_query, source=args.source, location=args.location)
+                for note in outcome.skipped: print(note)
+                if outcome.skipped and not outcome.queries_run:
+                    store.audit("search_completed", details="no source was searched")
+                    return
                 raw_jobs = outcome.jobs; search_count = outcome.queries_run
                 store.audit("search_completed", details=f"{len(raw_jobs)} public results")
             if args.command == "search" and not raw_jobs:

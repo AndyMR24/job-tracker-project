@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .adzuna import AdzunaSource
+from .adzuna import AdzunaError, AdzunaSource
 from .ba import BASource
 from .evaluator import evaluate
 from .himalayas import HimalayasSource
@@ -15,10 +15,40 @@ from .profile import Profile
 SOURCE_NAMES = ("adzuna", "nomado24", "himalayas", "ba")
 
 
+class UnavailableSource:
+    """Placeholder for a configured source that cannot be built, such as Adzuna without credentials."""
+
+    def __init__(self, label: str, reason: str):
+        self.label = label
+        self.reason = reason
+
+    @property
+    def note(self) -> str:
+        return f"{self.label} skipped: {self.reason}; no {self.label} search was performed."
+
+    def search(self, query: str, location: str | None = None) -> list[dict]:
+        raise RuntimeError(self.note)
+
+
 def default_sources(root: str | Path) -> dict[str, tuple[object, bool]]:
-    """Build the public source adapters in the order used for configured searches."""
+    """Build the public source adapters in the order used for configured searches.
+
+    Adzuna becomes an unavailable placeholder when its credentials are absent, so the remaining
+    sources can still be searched; `collect` reports the skip instead of failing the whole run.
+    Rejected credentials are not treated as missing - they fail at request time as before.
+    """
     root = Path(root)
-    return {"adzuna": (AdzunaSource(root / ".env"), True), "nomado24": (Nomado24Source(), True), "himalayas": (HimalayasSource(), False), "ba": (BASource(), True)}
+    sources: dict[str, tuple[object, bool]] = {}
+    try:
+        sources["adzuna"] = (AdzunaSource(root / ".env"), True)
+    except AdzunaError:
+        # AdzunaSource raises at construction only when a credential is missing; nothing else is
+        # caught here, so unrelated failures keep their existing handling.
+        sources["adzuna"] = (UnavailableSource("Adzuna", "ADZUNA_APP_ID and ADZUNA_APP_KEY are not set"), True)
+    sources["nomado24"] = (Nomado24Source(), True)
+    sources["himalayas"] = (HimalayasSource(), False)
+    sources["ba"] = (BASource(), True)
+    return sources
 
 
 @dataclass
@@ -27,6 +57,7 @@ class SearchOutcome:
     queries_run: int = 0
     source_results: dict[str, int] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
+    skipped: list[str] = field(default_factory=list)
 
 
 def collect(sources, *, queries=None, query=None, source=None, location=None, tolerate_errors=False, progress=None) -> SearchOutcome:
@@ -39,10 +70,14 @@ def collect(sources, *, queries=None, query=None, source=None, location=None, to
     else:
         chosen = [(name, adapter, accepts_location) for name, (adapter, accepts_location) in sources.items() if source is None or name == source]
         plans = [(text, chosen) for text in queries or []]
-    total = sum(len(adapters) for _, adapters in plans)
+    total = sum(1 for _, adapters in plans for _, adapter, _ in adapters if not isinstance(adapter, UnavailableSource))
     seen: set[tuple] = set()
     for text, adapters in plans:
         for name, adapter, accepts_location in adapters:
+            if isinstance(adapter, UnavailableSource):
+                if adapter.note not in outcome.skipped:
+                    outcome.skipped.append(adapter.note)
+                continue
             outcome.queries_run += 1
             try:
                 results = adapter.search(text, location) if accepts_location else adapter.search(text)

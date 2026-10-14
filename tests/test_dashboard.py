@@ -13,12 +13,14 @@ from pathlib import Path
 from unittest.mock import patch
 
 from job_agent import dashboard
+from job_agent import discovery
+from job_agent.adzuna import AdzunaError
 from job_agent.cli import main as cli_main
 from job_agent.evaluator import evaluate
 from job_agent.normalizer import normalize
 from job_agent.profile import load_config, load_profile
 from job_agent.storage import Store
-from job_agent.webapp import build_server
+from job_agent.webapp import SearchManager, build_server
 
 try:  # works for "python -m unittest discover -s tests" and for pytest
     from support import write_config, write_profile
@@ -373,6 +375,51 @@ class HttpTests(DashboardFixture):
         with contextlib.redirect_stdout(output):
             cli_main(["--profile", str(self.profile_path), "--config", str(self.config_path), "--database", str(self.database), "list"])
         self.assertIn("Python Developer", output.getvalue())
+
+
+class SearchSkipTests(DashboardFixture):
+    """Dashboard searches keep running without Adzuna credentials and still report rejected ones."""
+
+    def wait_for_search(self, manager):
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            state = manager.snapshot()
+            if not state["running"]:
+                return state
+            time.sleep(0.2)
+        self.fail("search did not finish")
+
+    def test_search_without_adzuna_credentials_continues_and_reports_the_skip(self):
+        expected = load_config(self.config_path)["search_queries"]["primary"] + load_config(self.config_path)["search_queries"]["secondary"]
+        adapters = {name: StubAdapter([], name) for name in ("nomado24", "himalayas", "ba")}
+        manager = SearchManager(profile_path=self.profile_path, config_path=self.config_path, database_path=self.database, sources_factory=discovery.default_sources)
+        with patch("job_agent.discovery.AdzunaSource", side_effect=AdzunaError("Missing Adzuna credentials: ADZUNA_APP_ID, ADZUNA_APP_KEY")), patch("job_agent.discovery.Nomado24Source", lambda *_: adapters["nomado24"]), patch("job_agent.discovery.HimalayasSource", lambda *_: adapters["himalayas"]), patch("job_agent.discovery.BASource", lambda *_: adapters["ba"]):
+            started, message = manager.start(mode="configured")
+            self.assertTrue(started, message)
+            state = self.wait_for_search(manager)
+        self.assertIn("Adzuna skipped: ADZUNA_APP_ID and ADZUNA_APP_KEY are not set; no Adzuna search was performed.", state["message"])
+        self.assertTrue(any("Adzuna skipped" in line for line in state["log"]))
+        self.assertNotIn("source error(s)", state["message"])
+        for name, adapter in adapters.items():
+            with self.subTest(source=name):
+                self.assertEqual([call[0] for call in adapter.calls], expected)
+
+    def test_rejected_adzuna_credentials_are_reported_as_a_source_error(self):
+        class RejectedAdapter:
+            def __init__(self): self.calls = []
+            def search(self, query, location=None): self.calls.append(query); raise AdzunaError("Adzuna request failed with HTTP status 401.")
+        rejected = RejectedAdapter()
+        adapters = {name: StubAdapter([], name) for name in ("nomado24", "himalayas", "ba")}
+        manager = SearchManager(profile_path=self.profile_path, config_path=self.config_path, database_path=self.database, sources_factory=lambda root: {"adzuna": (rejected, True), "nomado24": (adapters["nomado24"], True), "himalayas": (adapters["himalayas"], False), "ba": (adapters["ba"], True)})
+        started, message = manager.start(mode="configured")
+        self.assertTrue(started, message)
+        state = self.wait_for_search(manager)
+        self.assertIn("Adzuna request failed with HTTP status 401.", "; ".join(state["errors"]))
+        self.assertIn("source error(s)", state["message"])
+        self.assertNotIn("Adzuna skipped", state["message"])
+        for name, adapter in adapters.items():
+            with self.subTest(source=name):
+                self.assertTrue(adapter.calls)
 
 
 if __name__ == "__main__":
