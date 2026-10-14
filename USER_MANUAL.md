@@ -9,11 +9,11 @@ Use Python 3.11 or later. From this directory, run `python -m pip install -e .`,
 Two local files describe you and your search. Both are ignored by Git, so a fresh clone contains only the tracked examples:
 
 - `data/profile.json` - your factual profile (identity, contact, education, skills, projects, thesis, languages, certifications, employment eligibility). Create it by copying `data/profile.example.json` and replacing the placeholders with your own facts.
-- `data/search_config.json` - your preferences (target roles, locations, work arrangements, commute radius, search queries and the secondary `preferred_languages` ranking preference) plus `master_cv_path`, the path to your master CV. Create it by copying `data/search_config.example.json`.
+- `data/search_config.json` - your preferences (target roles, locations, work arrangements, commute radius, search queries and the secondary `preferred_languages` ranking preference). Create it by copying `data/search_config.example.json`.
 
-Do not put desired roles or preferences in the profile. If `master_cv_path` points at a file that does not exist, `job-agent validate` reports it and CV generation remains unavailable until you provide the file.
+Do not put desired roles or preferences in the profile.
 
-Your master CV and any long-form profile notes are optional local files and are not part of a fresh clone: `SOURCE_CV.pdf` and `MASTER_PROFILE.md` are ignored by Git, so only you have them. If you keep a master CV, place it in your local checkout and point `master_cv_path` in `data/search_config.json` at it; `job-agent validate` reports whether that file exists, and CV generation stays unavailable until it does. The canonical factual source used by the application is always `data/profile.json`. If a local master document and the structured profile disagree, correct the source deliberately; this MVP does not silently resolve conflicts.
+CV drafts are generated from `data/profile.json` together with the built-in LaTeX template in `templates/resume.tex`; no separate master CV file is needed or configured. If you also keep longer notes or a copy of a CV in your checkout, they are local only: `SOURCE_CV.pdf` and `MASTER_PROFILE.md` are ignored by Git, so a fresh clone never contains them. The canonical factual source used by the application is always `data/profile.json`. If one of your local documents and the structured profile disagree, correct the source deliberately; this MVP does not silently resolve conflicts.
 
 ## Web dashboard
 

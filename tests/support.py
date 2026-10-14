@@ -61,7 +61,6 @@ def sample_config() -> dict:
         "work_arrangements": ["remote", "hybrid", "onsite"],
         "maximum_commute_note": "Synthetic configuration used by the test suite.",
         "location_preferences": {"origin": "Aachen", "max_distance_km": 225, "remote_only_beyond_distance": True},
-        "master_cv_path": "your-master-cv.pdf",
         "preferred_languages": ["Python"],
         "search_queries": {"primary": ["Data Analyst", "Junior Data Analyst", "Python Developer"], "secondary": ["IT Consultant", "Data Consultant"]},
     }

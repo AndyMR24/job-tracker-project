@@ -79,9 +79,7 @@ def main(argv=None):
             return
         profile, config, store = paths(args)
         if args.command == "validate":
-            master_cv = config.get("master_cv_path")
-            if master_cv and not Path(master_cv).exists(): print(f"Profile and configuration are valid. Master CV path needs attention: {master_cv}")
-            else: print("Profile and configuration are valid.")
+            print("Profile and configuration are valid.")
             return
         if args.command in {"ingest", "search"}:
             search_count = new_count = known_count = excluded_count = 0

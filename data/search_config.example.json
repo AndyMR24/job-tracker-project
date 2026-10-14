@@ -23,7 +23,6 @@
     "max_distance_km": 225,
     "remote_only_beyond_distance": true
   },
-  "master_cv_path": "SOURCE_CV.pdf",
   "preferred_languages": [
     "Python"
   ],

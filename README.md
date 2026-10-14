@@ -75,8 +75,7 @@ cp data/search_config.example.json data/search_config.json
   thesis, languages, certifications, employment eligibility). Replace every placeholder with your
   own facts; never add facts you cannot support.
 - `data/search_config.json` holds your preferences (target roles, locations, work arrangements,
-  commute radius, search queries, `preferred_languages`) and `master_cv_path`, which points at your
-  master CV if you want CV drafts.
+  commute radius, search queries and `preferred_languages`).
 
 Adzuna credentials are read from the environment or from a local `.env` file in the project root:
 
