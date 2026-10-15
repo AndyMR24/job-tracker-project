@@ -12,7 +12,7 @@ import urllib.request
 from pathlib import Path
 from unittest.mock import patch
 
-from job_agent import dashboard
+from job_agent import dashboard, webui
 from job_agent import discovery
 from job_agent.adzuna import AdzunaError
 from job_agent.cli import main as cli_main
@@ -193,7 +193,7 @@ class HttpTests(DashboardFixture):
         self.assertEqual(status, 200)
         self.assertIn("Fit evaluation", body)
         self.assertIn("Confirmed skill: Python", body)
-        self.assertIn("Preferred/useful requirement not confirmed: Excel", body)
+        self.assertIn("Preferred requirement could not be verified from the profile: Excel", body)
         self.assertIn("https://example.test/1", body)
         self.assertIn("Original posting", body)
         self.assertIn("<th>Requirement</th>", body)
@@ -420,6 +420,76 @@ class SearchSkipTests(DashboardFixture):
         for name, adapter in adapters.items():
             with self.subTest(source=name):
                 self.assertTrue(adapter.calls)
+
+
+class PresentationTests(DashboardFixture):
+    """Search-page usability and timestamp presentation."""
+
+    ISO = r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}"
+    PRETTY = r"\d{2}-\d{2}-\d{4}, \d{2}:\d{2}"
+
+    def test_timestamp_helper_formats_stored_values(self):
+        self.assertEqual(webui.timestamp("2026-10-15T14:02:33.123456+00:00"), "15-10-2026, 14:02")
+        self.assertEqual(webui.timestamp("2026-10-15T14:02:33Z"), "15-10-2026, 14:02")
+        self.assertEqual(webui.timestamp("2026-09-20"), "20-09-2026")
+        self.assertEqual(webui.timestamp("2026-09-20 08:05:00"), "20-09-2026, 08:05")
+        self.assertEqual(webui.timestamp(""), "")
+        self.assertEqual(webui.timestamp(None), "")
+        self.assertEqual(webui.timestamp("not a date"), "not a date")
+
+    def test_job_detail_explains_the_requirement_kind_and_formats_timestamps(self):
+        status, body = self.get("/jobs/%s" % self.ids["Junior Data Analyst"])
+        self.assertEqual(status, 200)
+        self.assertIn("<th>Requirement</th>", body)
+        self.assertIn("Stated as", body)
+        self.assertIn("It comes from the listing, not from your profile.", body)
+        self.assertIn('class="badge kind"', body)
+        self.assertIn("Discovered (UTC)", body)
+        self.assertIn("Last seen (UTC)", body)
+        self.assertRegex(body, self.PRETTY)
+        self.assertNotRegex(body, self.ISO)
+
+    def test_job_list_and_history_use_the_readable_timestamp_format(self):
+        for path, marker in (("/jobs", "Discovered (UTC)"), ("/history", "When (UTC)")):
+            with self.subTest(path=path):
+                status, body = self.get(path)
+                self.assertEqual(status, 200)
+                self.assertIn(marker, body)
+                self.assertRegex(body, self.PRETTY)
+                self.assertNotRegex(body, self.ISO)
+
+    def test_application_and_source_pages_use_the_readable_timestamp_format(self):
+        job_id = self.ids["Junior Data Analyst"]
+        status, _, _ = self.post("/jobs/%s/application" % job_id, {"status": "applied", "date": "2026-09-20", "notes": "sent by email"})
+        self.assertEqual(status, 200)
+        _, body = self.get("/applications")
+        self.assertIn("20-09-2026", body)
+        self.assertIn("Updated (UTC)", body)
+        self.assertEqual(self.store().connection.execute("SELECT application_date FROM applications WHERE job_id=?", (job_id,)).fetchone()["application_date"], "2026-09-20")
+        _, sources = self.get("/sources")
+        self.assertIn("Newest (UTC)", sources)
+        self.assertRegex(sources, self.PRETTY)
+
+    def test_search_page_scrolls_the_progress_log_and_keeps_the_start_notice(self):
+        status, body = self.get("/search?notice=Search+started.")
+        self.assertEqual(status, 200)
+        self.assertIn("Search started.", body)
+        self.assertIn('id="search-notice"', body)
+        self.assertIn('class="log small" id="search-log"', body)
+        self.assertIn("overflow-y:auto", body)
+        self.assertIn("Keeps the newest 200 lines", body)
+        self.assertIn("scrollHeight", body)
+        self.assertIn("formatTimestamp", body)
+        self.assertIn("Search failed", body)
+        self.assertIn("6000", body)
+
+    def test_search_status_endpoint_keeps_the_fields_the_page_uses(self):
+        status, payload = self.get("/search/status.json")
+        self.assertEqual(status, 200)
+        state = json.loads(payload)
+        for key in ("running", "message", "finished_at", "started_at", "log", "errors"):
+            with self.subTest(key=key):
+                self.assertIn(key, state)
 
 
 if __name__ == "__main__":

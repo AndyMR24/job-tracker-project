@@ -1,5 +1,5 @@
 {
-  "_instructions": "Template only. Copy this file to data/search_config.json and adjust the target roles, locations, queries and commute radius to your own preferences. data/search_config.json is ignored by Git.",
+  "_instructions": "Template only. Copy this file to data/search_config.json and adjust the target roles, locations, queries, commute radius and the optional evaluation weights to your own preferences. data/search_config.json is ignored by Git. The evaluation block overrides the built-in scoring weights shown here (base_score, recommended_threshold and the weights object); after changing a value run `job-agent re-evaluate` so jobs already stored are scored again. The weights.missing_requirement values are accepted for backward compatibility only: a requirement the profile does not list is treated as unverified rather than missing, so changing those three numbers has no effect on scores.",
   "target_roles": [
     "Data Analyst",
     "Data Scientist",
@@ -26,6 +26,39 @@
   "preferred_languages": [
     "Python"
   ],
+  "evaluation": {
+    "base_score": 50,
+    "recommended_threshold": 60,
+    "weights": {
+      "target_role": 15,
+      "secondary_query": 8,
+      "senior_penalty": 45,
+      "confirmed_skill": {
+        "mandatory": 8,
+        "other": 4
+      },
+      "missing_requirement": {
+        "mandatory": 18,
+        "preferred": 4,
+        "useful": 4
+      },
+      "degree_required_penalty": 50,
+      "degree_mentioned": 10,
+      "experience_requirement": {
+        "mandatory": 25,
+        "preferred": 8
+      },
+      "source_snippet": 5,
+      "no_requirements": 5,
+      "remote": 6,
+      "onsite_or_hybrid_within_radius": 4,
+      "preferred_language": {
+        "requirement": 3,
+        "qualification": 2,
+        "description": 1
+      }
+    }
+  },
   "search_queries": {
     "primary": [
       "Data Analyst",

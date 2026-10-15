@@ -119,8 +119,10 @@ class RegressionTests(unittest.TestCase):
         self.assertTrue(outside.excluded)
         python_only = evaluate(Job("Junior Data Analyst", requirements=[Requirement("Python", "mandatory")]), self.profile, self.config)
         missing_core = evaluate(Job("Junior Data Analyst", requirements=[Requirement("Python", "mandatory"), Requirement("Kubernetes", "mandatory")]), self.profile, self.config)
-        self.assertEqual(python_only.score - missing_core.score, 18)
+        # an unlisted requirement is unknown, not a gap: it costs nothing and is left for review
+        self.assertEqual(python_only.score, missing_core.score)
         self.assertFalse(missing_core.excluded)
+        self.assertTrue(any("Kubernetes" in item for item in missing_core.uncertainties))
 
     def test_explicit_python_mentions_outweigh_incidental_ones(self):
         explicit = evaluate(Job("Junior Data Analyst", requirements=[Requirement("Python", "preferred")]), self.profile, self.config)

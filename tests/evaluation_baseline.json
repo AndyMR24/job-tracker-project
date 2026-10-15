@@ -1,0 +1,551 @@
+{
+  "_note": "Golden evaluation output of the shipped evaluator: captured before the configurable evaluation weights were added and updated deliberately when an unlisted requirement stopped receiving the missing_requirement penalty (the 'missing mandatory requirement' and 'missing preferred requirement' cases).",
+  "_fixtures": "tests/support.py:evaluation_cases",
+  "cases": [
+    {
+      "case": "junior hybrid within radius",
+      "evaluation": {
+        "score": 80,
+        "assessment": "recommended",
+        "excluded": false,
+        "strong_matches": [
+          "Title is related to a configured target role.",
+          "Confirmed skill: Python.",
+          "Python is a secondary preference and appears in the listed requirements.",
+          "Location is within the configured geographic radius."
+        ],
+        "potential_gaps": [],
+        "concerns": [],
+        "uncertainties": [
+          "Seniority is not stated clearly."
+        ]
+      }
+    },
+    {
+      "case": "senior title excluded",
+      "evaluation": {
+        "score": 31,
+        "assessment": "rejected",
+        "excluded": true,
+        "strong_matches": [
+          "Title is related to a configured target role.",
+          "Confirmed skill: Python.",
+          "Python is a secondary preference and appears in the listed requirements."
+        ],
+        "potential_gaps": [],
+        "concerns": [
+          "The posting is explicitly senior-level while the profile has no professional employment experience."
+        ],
+        "uncertainties": [
+          "Job city could not be resolved for geographic-radius evaluation.",
+          "Work arrangement is unknown."
+        ]
+      }
+    },
+    {
+      "case": "lead title excluded",
+      "evaluation": {
+        "score": 15,
+        "assessment": "rejected",
+        "excluded": true,
+        "strong_matches": [
+          "Title is related to a configured target role."
+        ],
+        "potential_gaps": [],
+        "concerns": [
+          "The posting is explicitly senior-level while the profile has no professional employment experience."
+        ],
+        "uncertainties": [
+          "The listing does not expose explicit requirements; technical qualifications could not be fully verified.",
+          "Job city could not be resolved for geographic-radius evaluation.",
+          "Work arrangement is unknown."
+        ]
+      }
+    },
+    {
+      "case": "mandatory master excluded",
+      "evaluation": {
+        "score": 15,
+        "assessment": "rejected",
+        "excluded": true,
+        "strong_matches": [
+          "Title is related to a configured target role."
+        ],
+        "potential_gaps": [],
+        "concerns": [
+          "A Master's degree is explicitly required; the profile records a Bachelor's degree."
+        ],
+        "uncertainties": [
+          "Seniority is not stated clearly.",
+          "Job city could not be resolved for geographic-radius evaluation.",
+          "Work arrangement is unknown."
+        ]
+      }
+    },
+    {
+      "case": "preferred master penalised",
+      "evaluation": {
+        "score": 55,
+        "assessment": "borderline",
+        "excluded": false,
+        "strong_matches": [
+          "Title is related to a configured target role."
+        ],
+        "potential_gaps": [
+          "A Master's degree is mentioned but the profile records a Bachelor's degree."
+        ],
+        "concerns": [],
+        "uncertainties": [
+          "Seniority is not stated clearly.",
+          "Job city could not be resolved for geographic-radius evaluation.",
+          "Work arrangement is unknown."
+        ]
+      }
+    },
+    {
+      "case": "mastery wording hits the degree branch",
+      "evaluation": {
+        "score": 15,
+        "assessment": "rejected",
+        "excluded": true,
+        "strong_matches": [
+          "Title is related to a configured target role."
+        ],
+        "potential_gaps": [],
+        "concerns": [
+          "A Master's degree is explicitly required; the profile records a Bachelor's degree."
+        ],
+        "uncertainties": [
+          "Seniority is not stated clearly.",
+          "Job city could not be resolved for geographic-radius evaluation.",
+          "Work arrangement is unknown."
+        ]
+      }
+    },
+    {
+      "case": "missing mandatory requirement",
+      "evaluation": {
+        "score": 76,
+        "assessment": "recommended",
+        "excluded": false,
+        "strong_matches": [
+          "Title is related to a configured target role.",
+          "Confirmed skill: Python.",
+          "Python is a secondary preference and appears in the listed requirements."
+        ],
+        "potential_gaps": [],
+        "concerns": [],
+        "uncertainties": [
+          "Seniority is not stated clearly.",
+          "Mandatory requirement could not be verified from the profile: Kubernetes.",
+          "Job city could not be resolved for geographic-radius evaluation.",
+          "Work arrangement is unknown."
+        ]
+      }
+    },
+    {
+      "case": "missing preferred requirement",
+      "evaluation": {
+        "score": 65,
+        "assessment": "recommended",
+        "excluded": false,
+        "strong_matches": [
+          "Title is related to a configured target role."
+        ],
+        "potential_gaps": [],
+        "concerns": [],
+        "uncertainties": [
+          "Seniority is not stated clearly.",
+          "Preferred requirement could not be verified from the profile: Kubernetes.",
+          "Job city could not be resolved for geographic-radius evaluation.",
+          "Work arrangement is unknown."
+        ]
+      }
+    },
+    {
+      "case": "unknown requirement kind",
+      "evaluation": {
+        "score": 65,
+        "assessment": "recommended",
+        "excluded": false,
+        "strong_matches": [
+          "Title is related to a configured target role."
+        ],
+        "potential_gaps": [],
+        "concerns": [],
+        "uncertainties": [
+          "Seniority is not stated clearly.",
+          "Requirement needs review: Tableau.",
+          "Job city could not be resolved for geographic-radius evaluation.",
+          "Work arrangement is unknown."
+        ]
+      }
+    },
+    {
+      "case": "experience in years mandatory",
+      "evaluation": {
+        "score": 40,
+        "assessment": "borderline",
+        "excluded": false,
+        "strong_matches": [
+          "Title is related to a configured target role."
+        ],
+        "potential_gaps": [],
+        "concerns": [
+          "Professional-experience requirement is not satisfied by projects or thesis work."
+        ],
+        "uncertainties": [
+          "Seniority is not stated clearly.",
+          "Job city could not be resolved for geographic-radius evaluation.",
+          "Work arrangement is unknown."
+        ]
+      }
+    },
+    {
+      "case": "experience in years preferred",
+      "evaluation": {
+        "score": 57,
+        "assessment": "borderline",
+        "excluded": false,
+        "strong_matches": [
+          "Title is related to a configured target role."
+        ],
+        "potential_gaps": [],
+        "concerns": [
+          "Professional-experience requirement is not satisfied by projects or thesis work."
+        ],
+        "uncertainties": [
+          "Seniority is not stated clearly.",
+          "Job city could not be resolved for geographic-radius evaluation.",
+          "Work arrangement is unknown."
+        ]
+      }
+    },
+    {
+      "case": "remote job",
+      "evaluation": {
+        "score": 66,
+        "assessment": "recommended",
+        "excluded": false,
+        "strong_matches": [
+          "Title is related to a configured target role.",
+          "Germany-wide remote work is enabled in the configuration."
+        ],
+        "potential_gaps": [],
+        "concerns": [],
+        "uncertainties": [
+          "Seniority is not stated clearly.",
+          "The listing does not expose explicit requirements; technical qualifications could not be fully verified.",
+          "Job city could not be resolved for geographic-radius evaluation."
+        ]
+      }
+    },
+    {
+      "case": "remote beyond radius with a US restriction",
+      "evaluation": {
+        "score": 66,
+        "assessment": "rejected",
+        "excluded": true,
+        "strong_matches": [
+          "Title is related to a configured target role.",
+          "Germany-wide remote work is enabled in the configuration."
+        ],
+        "potential_gaps": [],
+        "concerns": [
+          "The posting is restricted to United States; the profile records residence in Germany."
+        ],
+        "uncertainties": [
+          "Seniority is not stated clearly.",
+          "The listing does not expose explicit requirements; technical qualifications could not be fully verified.",
+          "Job city could not be resolved for geographic-radius evaluation."
+        ]
+      }
+    },
+    {
+      "case": "remote with a Germany restriction",
+      "evaluation": {
+        "score": 66,
+        "assessment": "recommended",
+        "excluded": false,
+        "strong_matches": [
+          "Title is related to a configured target role.",
+          "Germany-wide remote work is enabled in the configuration.",
+          "The published restriction list explicitly allows Germany."
+        ],
+        "potential_gaps": [],
+        "concerns": [],
+        "uncertainties": [
+          "Seniority is not stated clearly.",
+          "The listing does not expose explicit requirements; technical qualifications could not be fully verified.",
+          "Job city could not be resolved for geographic-radius evaluation."
+        ]
+      }
+    },
+    {
+      "case": "onsite outside the radius",
+      "evaluation": {
+        "score": 60,
+        "assessment": "rejected",
+        "excluded": true,
+        "strong_matches": [
+          "Title is related to a configured target role."
+        ],
+        "potential_gaps": [],
+        "concerns": [
+          "Resolved city Munich is outside the configured geographic radius."
+        ],
+        "uncertainties": [
+          "Seniority is not stated clearly.",
+          "The listing does not expose explicit requirements; technical qualifications could not be fully verified."
+        ]
+      }
+    },
+    {
+      "case": "vague location stays unknown",
+      "evaluation": {
+        "score": 60,
+        "assessment": "recommended",
+        "excluded": false,
+        "strong_matches": [
+          "Title is related to a configured target role."
+        ],
+        "potential_gaps": [],
+        "concerns": [],
+        "uncertainties": [
+          "Seniority is not stated clearly.",
+          "The listing does not expose explicit requirements; technical qualifications could not be fully verified.",
+          "Job city could not be resolved for geographic-radius evaluation."
+        ]
+      }
+    },
+    {
+      "case": "description snippet",
+      "evaluation": {
+        "score": 60,
+        "assessment": "recommended",
+        "excluded": false,
+        "strong_matches": [
+          "Title is related to a configured target role."
+        ],
+        "potential_gaps": [],
+        "concerns": [],
+        "uncertainties": [
+          "Seniority is not stated clearly.",
+          "The source provides only a description snippet; additional requirements may be unavailable.",
+          "Job city could not be resolved for geographic-radius evaluation.",
+          "Work arrangement is unknown."
+        ]
+      }
+    },
+    {
+      "case": "no requirements",
+      "evaluation": {
+        "score": 60,
+        "assessment": "recommended",
+        "excluded": false,
+        "strong_matches": [
+          "Title is related to a configured target role."
+        ],
+        "potential_gaps": [],
+        "concerns": [],
+        "uncertainties": [
+          "Seniority is not stated clearly.",
+          "The listing does not expose explicit requirements; technical qualifications could not be fully verified.",
+          "Job city could not be resolved for geographic-radius evaluation.",
+          "Work arrangement is unknown."
+        ]
+      }
+    },
+    {
+      "case": "sponsorship wording",
+      "evaluation": {
+        "score": 60,
+        "assessment": "recommended",
+        "excluded": false,
+        "strong_matches": [
+          "Title is related to a configured target role."
+        ],
+        "potential_gaps": [],
+        "concerns": [],
+        "uncertainties": [
+          "Seniority is not stated clearly.",
+          "The listing does not expose explicit requirements; technical qualifications could not be fully verified.",
+          "Job city could not be resolved for geographic-radius evaluation.",
+          "Work arrangement is unknown.",
+          "Work-authorization or sponsorship wording requires verification; no legal conclusion is made."
+        ]
+      }
+    },
+    {
+      "case": "secondary query title",
+      "evaluation": {
+        "score": 57,
+        "assessment": "borderline",
+        "excluded": false,
+        "strong_matches": [
+          "Title is related to a configured secondary role.",
+          "Location is within the configured geographic radius."
+        ],
+        "potential_gaps": [],
+        "concerns": [],
+        "uncertainties": [
+          "Seniority is not stated clearly.",
+          "The listing does not expose explicit requirements; technical qualifications could not be fully verified."
+        ]
+      }
+    },
+    {
+      "case": "unrelated title",
+      "evaluation": {
+        "score": 49,
+        "assessment": "borderline",
+        "excluded": false,
+        "strong_matches": [
+          "Location is within the configured geographic radius."
+        ],
+        "potential_gaps": [
+          "Title is not clearly among the configured target roles."
+        ],
+        "concerns": [],
+        "uncertainties": [
+          "Seniority is not stated clearly.",
+          "The listing does not expose explicit requirements; technical qualifications could not be fully verified."
+        ]
+      }
+    },
+    {
+      "case": "mid seniority",
+      "evaluation": {
+        "score": 60,
+        "assessment": "recommended",
+        "excluded": false,
+        "strong_matches": [
+          "Title is related to a configured target role."
+        ],
+        "potential_gaps": [],
+        "concerns": [],
+        "uncertainties": [
+          "The listing does not expose explicit requirements; technical qualifications could not be fully verified.",
+          "Job city could not be resolved for geographic-radius evaluation.",
+          "Work arrangement is unknown."
+        ]
+      }
+    },
+    {
+      "case": "mixed senior and junior title",
+      "evaluation": {
+        "score": 60,
+        "assessment": "recommended",
+        "excluded": false,
+        "strong_matches": [
+          "Title is related to a configured target role.",
+          "Seniority appears compatible with an early-career search."
+        ],
+        "potential_gaps": [],
+        "concerns": [],
+        "uncertainties": [
+          "The listing does not expose explicit requirements; technical qualifications could not be fully verified.",
+          "Job city could not be resolved for geographic-radius evaluation.",
+          "Work arrangement is unknown."
+        ]
+      }
+    },
+    {
+      "case": "python in qualifications",
+      "evaluation": {
+        "score": 62,
+        "assessment": "recommended",
+        "excluded": false,
+        "strong_matches": [
+          "Title is related to a configured target role.",
+          "Python is a secondary preference and appears in the qualification text."
+        ],
+        "potential_gaps": [],
+        "concerns": [],
+        "uncertainties": [
+          "Seniority is not stated clearly.",
+          "The listing does not expose explicit requirements; technical qualifications could not be fully verified.",
+          "Job city could not be resolved for geographic-radius evaluation.",
+          "Work arrangement is unknown."
+        ]
+      }
+    },
+    {
+      "case": "python in the description",
+      "evaluation": {
+        "score": 61,
+        "assessment": "recommended",
+        "excluded": false,
+        "strong_matches": [
+          "Title is related to a configured target role.",
+          "Python is a secondary preference and appears in the job description."
+        ],
+        "potential_gaps": [],
+        "concerns": [],
+        "uncertainties": [
+          "Seniority is not stated clearly.",
+          "The listing does not expose explicit requirements; technical qualifications could not be fully verified.",
+          "Job city could not be resolved for geographic-radius evaluation.",
+          "Work arrangement is unknown."
+        ]
+      }
+    },
+    {
+      "case": "python in responsibilities",
+      "evaluation": {
+        "score": 61,
+        "assessment": "recommended",
+        "excluded": false,
+        "strong_matches": [
+          "Title is related to a configured target role.",
+          "Python is a secondary preference and appears in the job description."
+        ],
+        "potential_gaps": [],
+        "concerns": [],
+        "uncertainties": [
+          "Seniority is not stated clearly.",
+          "The listing does not expose explicit requirements; technical qualifications could not be fully verified.",
+          "Job city could not be resolved for geographic-radius evaluation.",
+          "Work arrangement is unknown."
+        ]
+      }
+    },
+    {
+      "case": "hybrid without a location",
+      "evaluation": {
+        "score": 60,
+        "assessment": "recommended",
+        "excluded": false,
+        "strong_matches": [
+          "Title is related to a configured target role."
+        ],
+        "potential_gaps": [],
+        "concerns": [],
+        "uncertainties": [
+          "Seniority is not stated clearly.",
+          "The listing does not expose explicit requirements; technical qualifications could not be fully verified.",
+          "Job city could not be resolved for geographic-radius evaluation.",
+          "Hybrid/onsite posting has no stated location."
+        ]
+      }
+    },
+    {
+      "case": "unknown arrangement",
+      "evaluation": {
+        "score": 60,
+        "assessment": "recommended",
+        "excluded": false,
+        "strong_matches": [
+          "Title is related to a configured target role."
+        ],
+        "potential_gaps": [],
+        "concerns": [],
+        "uncertainties": [
+          "Seniority is not stated clearly.",
+          "The listing does not expose explicit requirements; technical qualifications could not be fully verified.",
+          "Work arrangement is unknown."
+        ]
+      }
+    }
+  ]
+}

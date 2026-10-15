@@ -7,6 +7,9 @@ does not fit, records your decisions and application progress, and drafts truthf
 It never submits an application and never contacts employers. The current application code does not
 send your profile or CV content to external services.
 
+**New to the project?** [USER_MANUAL.md](USER_MANUAL.md#1-getting-started) is the complete guide: it
+covers installation on Windows, the first configuration, day-to-day use and how the scoring works.
+
 ## What it does
 
 - **Discovery** - runs your configured queries against four public sources (Adzuna, Nomado24,
@@ -14,8 +17,8 @@ send your profile or CV content to external services.
   internal job shape.
 - **Explainable fit** - every job gets a score plus strong matches, potential gaps, important
   concerns and uncertainties. Hard exclusions are limited to explicit mismatches such as a senior
-  role, a required Master's degree, a location outside your radius, or a country restriction that
-  excludes you.
+  role when your profile records that you have no professional experience, a required Master's degree
+  you do not hold, a location outside your radius, or a country restriction that excludes you.
 - **Decisions and history** - save jobs, reject them with a reason, and keep a local audit trail of
   what the tool did.
 - **Application tracking** - record your own applications and their status; the tool only records
@@ -41,11 +44,17 @@ logic.
 - Optional: a LaTeX distribution providing `pdflatex`, needed only to generate CV PDFs.
 - Optional: free Adzuna API credentials, needed only to query Adzuna.
 
-## Setup
+## Quick start
+
+These commands install the project on Windows PowerShell.
+[USER_MANUAL.md](USER_MANUAL.md#1-getting-started) walks through the same steps in more detail,
+including what you should see and how to fix common problems.
 
 ```bash
-git clone <your-fork-url>
+git clone https://github.com/AndyMR24/job-tracker-project.git
 cd job-tracker-project
+python -m venv .venv
+.venv\Scripts\Activate.ps1
 python -m pip install -e .
 ```
 
@@ -75,7 +84,28 @@ Adzuna-only search explains that nothing was searched. Everything else works wit
 failure rather than a missing source; [USER_MANUAL.md](USER_MANUAL.md) explains what each interface
 shows.
 
-Check everything with `job-agent validate`.
+Check everything with `job-agent validate`, then start the dashboard with `job-agent dashboard` and
+open http://127.0.0.1:8770/ . Press Ctrl+C in that terminal to stop it.
+
+## How jobs are scored
+
+Every stored job gets a score from 0 to 100. Scoring starts at 50 and applies fixed, configurable
+rules: +15 when the title matches one of your `target_roles`, +8 for a configured secondary query,
++8 or +4 when your profile confirms a requirement, +3/+2/+1 for a `preferred_languages` mention, +6
+for remote work and +4 for hybrid or onsite work inside your radius. Only four findings exclude a
+job: a senior role while your profile records no professional experience, an explicitly required
+Master's degree while you record a lower completed degree, a location outside your radius unless the
+job is explicitly remote, and a published country restriction that excludes your residence country.
+
+A job is labelled `recommended` from 60 upwards, `borderline` below that, and `rejected` when it is
+excluded. Requirements the profile does not verify do not cost points: they are listed as
+uncertainties that need a manual review, so a job can still be recommended while containing
+requirements the profile could not confirm. The evaluator is a deterministic, rule-based scoring
+system rather than a machine-learning model, and a high score is a match against your configured
+rules, not a hiring probability.
+
+[Understanding job evaluations](USER_MANUAL.md#4-understanding-job-evaluations) explains every rule,
+the configurable `evaluation` weights and the limitations in full.
 
 ## Usage - CLI
 
@@ -141,7 +171,8 @@ temporary databases, so they need no personal data, credentials or network acces
 
 ## Project documents
 
-- [USER_MANUAL.md](USER_MANUAL.md) - the full walkthrough for using the application.
+- [USER_MANUAL.md](USER_MANUAL.md) - the complete user guide: Windows installation, first-time
+  configuration, dashboard and CLI usage, how jobs are scored, and troubleshooting.
 - [DEVELOPMENT.md](DEVELOPMENT.md) - architecture, module responsibilities, design decisions and
   development conventions.
 

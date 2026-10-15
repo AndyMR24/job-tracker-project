@@ -42,9 +42,13 @@ class AgentTests(unittest.TestCase):
         self.assertTrue(required.excluded); self.assertFalse(preferred.excluded); self.assertLess(required.score, preferred.score)
 
     def test_mandatory_gap_is_stronger_than_optional_gap(self):
-        must = evaluate(Job("Data Analyst", requirements=[Requirement("R", "mandatory")]), self.profile, self.config)
-        nice = evaluate(Job("Data Analyst", requirements=[Requirement("R", "preferred")]), self.profile, self.config)
-        self.assertLess(must.score, nice.score); self.assertNotIn("r", self.profile.skills)
+        must = evaluate(Job("Data Analyst", requirements=[Requirement("5 years of experience", "mandatory")]), self.profile, self.config)
+        nice = evaluate(Job("Data Analyst", requirements=[Requirement("5 years of experience", "preferred")]), self.profile, self.config)
+        self.assertLess(must.score, nice.score)
+        # a requirement the profile does not list is unknown, so its kind carries no penalty
+        unlisted_mandatory = evaluate(Job("Data Analyst", requirements=[Requirement("R", "mandatory")]), self.profile, self.config)
+        unlisted_preferred = evaluate(Job("Data Analyst", requirements=[Requirement("R", "preferred")]), self.profile, self.config)
+        self.assertEqual(unlisted_mandatory.score, unlisted_preferred.score); self.assertNotIn("r", self.profile.skills)
 
     def test_unknown_and_location_are_visible(self):
         result = evaluate(Job("Data Analyst", location="Berlin", arrangement="onsite"), self.profile, self.config)

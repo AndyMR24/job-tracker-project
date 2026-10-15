@@ -1,7 +1,7 @@
 import tempfile
 import unittest
 
-from job_agent.evaluator import evaluate
+from job_agent.evaluator import DEFAULT_EVALUATION_SETTINGS, evaluate
 from job_agent.location import EligibilityStatus, LocationStatus, extract_city, resolve_eligibility, resolve_location
 from job_agent.models import Job
 from job_agent.profile import load_config, load_profile
@@ -53,6 +53,118 @@ class LocationTests(unittest.TestCase):
         preferences = self.config["location_preferences"]
         self.assertEqual(resolve_location(None, preferences).status, LocationStatus.UNKNOWN)
         self.assertEqual(resolve_location("Europe", preferences).status, LocationStatus.UNKNOWN)
+
+
+UNRESOLVABLE = "Xyzzyville"  # no such city in the fallback dictionary or geonamescache
+ORIGIN_MESSAGE = "could not be resolved, so the geographic radius was not applied"
+JOB_MESSAGE = "Job city could not be resolved for geographic-radius evaluation."
+WITHIN_RADIUS_MESSAGE = "Location is within the configured geographic radius."
+
+
+class LocationResolutionTests(unittest.TestCase):
+    """The result says which side of the check failed instead of collapsing both into one status."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.directory = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls.directory.cleanup)
+        cls.config = load_config(write_config(cls.directory.name))
+
+    def preferences(self, **overrides):
+        return {**self.config["location_preferences"], **overrides}
+
+    def test_resolvable_origin_and_job_location(self):
+        result = resolve_location("Aachen", self.preferences())
+        self.assertEqual(result.status, LocationStatus.WITHIN_RADIUS)
+        self.assertTrue(result.origin_resolved)
+        self.assertTrue(result.job_location_resolved)
+
+    def test_unresolvable_origin_is_flagged_as_the_origin(self):
+        result = resolve_location("Aachen", self.preferences(origin=UNRESOLVABLE))
+        self.assertEqual(result.status, LocationStatus.UNKNOWN)
+        self.assertFalse(result.origin_resolved)
+        self.assertTrue(result.job_location_resolved)
+        self.assertEqual(result.city, "Aachen")
+
+    def test_unresolvable_job_location_is_flagged_as_the_job(self):
+        result = resolve_location(UNRESOLVABLE, self.preferences())
+        self.assertEqual(result.status, LocationStatus.UNKNOWN)
+        self.assertTrue(result.origin_resolved)
+        self.assertFalse(result.job_location_resolved)
+
+    def test_missing_job_location_is_flagged_as_the_job(self):
+        result = resolve_location(None, self.preferences())
+        self.assertEqual(result.status, LocationStatus.UNKNOWN)
+        self.assertTrue(result.origin_resolved)
+        self.assertFalse(result.job_location_resolved)
+
+    def test_both_sides_are_reported_when_neither_resolves(self):
+        result = resolve_location(UNRESOLVABLE, self.preferences(origin=UNRESOLVABLE))
+        self.assertEqual(result.status, LocationStatus.UNKNOWN)
+        self.assertFalse(result.origin_resolved)
+        self.assertFalse(result.job_location_resolved)
+
+
+class RadiusFilteringTests(unittest.TestCase):
+    """`evaluate` reports the right cause and only rewards a distance it could establish."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.directory = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls.directory.cleanup)
+        cls.profile = load_profile(write_profile(cls.directory.name))
+        cls.config = load_config(write_config(cls.directory.name))
+
+    def config_with(self, **preferences):
+        return {**self.config, "location_preferences": {**self.config["location_preferences"], **preferences}}
+
+    def test_inside_radius_keeps_the_within_radius_bonus(self):
+        result = evaluate(Job("Data Analyst", location="Aachen", arrangement="hybrid"), self.profile, self.config)
+        self.assertFalse(result.excluded)
+        self.assertIn(WITHIN_RADIUS_MESSAGE, result.strong_matches)
+
+    def test_outside_radius_still_excludes_non_remote_jobs(self):
+        result = evaluate(Job("Data Analyst", location="München", arrangement="onsite"), self.profile, self.config)
+        self.assertTrue(result.excluded)
+        self.assertTrue(any("outside the configured geographic radius" in concern for concern in result.concerns))
+
+    def test_remote_job_beyond_the_radius_needs_the_configured_switch(self):
+        job = Job("Data Analyst", location="München", arrangement="remote")
+        self.assertFalse(evaluate(job, self.profile, self.config).excluded)
+        refused = evaluate(job, self.profile, self.config_with(remote_only_beyond_distance=False))
+        self.assertTrue(refused.excluded)
+
+    def test_unresolvable_origin_is_reported_as_the_origin(self):
+        result = evaluate(Job("Data Analyst", location="Aachen", arrangement="hybrid"), self.profile, self.config_with(origin=UNRESOLVABLE))
+        self.assertFalse(result.excluded)
+        self.assertTrue(any(ORIGIN_MESSAGE in item for item in result.uncertainties))
+        self.assertNotIn(JOB_MESSAGE, result.uncertainties)
+        self.assertNotIn(WITHIN_RADIUS_MESSAGE, result.strong_matches)
+
+    def test_unresolvable_origin_does_not_award_the_within_radius_bonus(self):
+        job = Job("Data Analyst", location="Aachen", arrangement="hybrid")
+        resolved = evaluate(job, self.profile, self.config)
+        unresolved = evaluate(job, self.profile, self.config_with(origin=UNRESOLVABLE))
+        self.assertEqual(resolved.score - unresolved.score, DEFAULT_EVALUATION_SETTINGS["weights"]["onsite_or_hybrid_within_radius"])
+
+    def test_unresolvable_job_location_keeps_its_own_message(self):
+        result = evaluate(Job("Data Analyst", location=UNRESOLVABLE, arrangement="hybrid"), self.profile, self.config)
+        self.assertFalse(result.excluded)
+        self.assertIn(JOB_MESSAGE, result.uncertainties)
+        self.assertFalse(any(ORIGIN_MESSAGE in item for item in result.uncertainties))
+        self.assertNotIn(WITHIN_RADIUS_MESSAGE, result.strong_matches)
+
+    def test_both_unresolvable_reports_both_causes(self):
+        result = evaluate(Job("Data Analyst", location=UNRESOLVABLE, arrangement="hybrid"), self.profile, self.config_with(origin=UNRESOLVABLE))
+        self.assertFalse(result.excluded)
+        self.assertTrue(any(ORIGIN_MESSAGE in item for item in result.uncertainties))
+        self.assertIn(JOB_MESSAGE, result.uncertainties)
+
+    def test_remote_job_is_not_rejected_when_the_origin_is_unresolvable(self):
+        result = evaluate(Job("Data Analyst", location="Aachen", arrangement="remote"), self.profile, self.config_with(origin=UNRESOLVABLE))
+        self.assertFalse(result.excluded)
+        self.assertIn("Germany-wide remote work is enabled in the configuration.", result.strong_matches)
+        self.assertTrue(any(ORIGIN_MESSAGE in item for item in result.uncertainties))
 
 
 if __name__ == "__main__":

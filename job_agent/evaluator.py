@@ -6,15 +6,57 @@ from dataclasses import asdict, dataclass
 
 from .models import Job
 from .location import EligibilityStatus, LocationStatus, resolve_eligibility, resolve_location
-from .profile import Profile
+from .profile import DEGREE_LABELS, Profile, degree_meets
 
 
 # Secondary ranking preference. This is deliberately small, additive and never an eligibility rule:
 # a job is never excluded for missing it, and it cannot outweigh role relevance, seniority, location,
 # employment eligibility or the core requirement checks.
 SECONDARY_PREFERRED_LANGUAGES = ("python",)
-_SECONDARY_LANGUAGE_BONUS = {"requirement": 3, "qualification": 2, "description": 1}
 _SECONDARY_LANGUAGE_TIERS = {"requirement": "listed requirements", "qualification": "qualification text", "description": "job description"}
+
+# Shipped numeric evaluation rules. An optional `evaluation` block in the search configuration
+# overrides individual settings (see `evaluation_settings`; it is validated in profile.load_config).
+# Bonuses and penalties are stored as non-negative magnitudes and applied by addition or subtraction,
+# so `"senior_penalty": 45` subtracts 45. The numbers are independent of the exclusion triggers:
+# lowering a penalty - even to 0 - never disables an exclusion.
+DEFAULT_EVALUATION_SETTINGS = {
+    "base_score": 50,
+    "recommended_threshold": 60,
+    "weights": {
+        "target_role": 15,
+        "secondary_query": 8,
+        "senior_penalty": 45,
+        "confirmed_skill": {"mandatory": 8, "other": 4},
+        "missing_requirement": {"mandatory": 18, "preferred": 4, "useful": 4},
+        "degree_required_penalty": 50,
+        "degree_mentioned": 10,
+        "experience_requirement": {"mandatory": 25, "preferred": 8},
+        "source_snippet": 5,
+        "no_requirements": 5,
+        "remote": 6,
+        "onsite_or_hybrid_within_radius": 4,
+        "preferred_language": {"requirement": 3, "qualification": 2, "description": 1},
+    },
+}
+
+
+def _merged_settings(defaults: dict, override: dict) -> dict:
+    """Overlay configured values on the defaults key by key, without mutating either mapping."""
+    resolved = {}
+    for key, default in defaults.items():
+        value = override.get(key)
+        if isinstance(default, dict):
+            resolved[key] = _merged_settings(default, value if isinstance(value, dict) else {})
+        else:
+            resolved[key] = default if value is None else value
+    return resolved
+
+
+def evaluation_settings(config: dict) -> dict:
+    """Resolve the optional `evaluation` configuration block over the shipped defaults."""
+    override = config.get("evaluation")
+    return _merged_settings(DEFAULT_EVALUATION_SETTINGS, override if isinstance(override, dict) else {})
 
 
 def _secondary_language_signal(job: Job, languages: tuple[str, ...]) -> str | None:
@@ -68,7 +110,9 @@ class Evaluation:
 
 
 def evaluate(job: Job, profile: Profile, config: dict) -> Evaluation:
-    score = 50
+    settings = evaluation_settings(config)
+    weights = settings["weights"]
+    score = settings["base_score"]
     matches: list[str] = []
     gaps: list[str] = []
     concerns: list[str] = []
@@ -79,49 +123,77 @@ def evaluate(job: Job, profile: Profile, config: dict) -> Evaluation:
     primary_match = _matches_target_role(title, roles)
     secondary_match = _matches_configured_query(title, config["search_queries"]["secondary"])
     if primary_match:
-        score += 15; matches.append("Title is related to a configured target role.")
+        score += weights["target_role"]; matches.append("Title is related to a configured target role.")
     elif secondary_match:
-        score += 8; matches.append("Title is related to a configured secondary role.")
+        score += weights["secondary_query"]; matches.append("Title is related to a configured secondary role.")
     else:
         gaps.append("Title is not clearly among the configured target roles.")
+    experience = profile.has_professional_experience
     seniority = job.seniority
     if seniority == "unknown":
         seniority = next((level for level in ("intern", "trainee", "graduate", "entry", "junior", "associate", "senior", "lead", "principal", "staff", "head", "director") if re.search(rf"\b{re.escape(level)}\b", title)), "unknown")
     if seniority in {"senior", "lead", "principal", "staff", "head", "director"}:
-        score -= 45; excluded = True; concerns.append("The posting is explicitly senior-level while the profile has no professional employment experience.")
+        if experience is False:
+            score -= weights["senior_penalty"]; excluded = True; concerns.append("The posting is explicitly senior-level while the profile has no professional employment experience.")
+        elif experience:
+            matches.append("The posting is explicitly senior-level and the profile records professional experience.")
+        else:
+            unknown.append("The posting is explicitly senior-level and the profile does not record whether the candidate has professional experience; the requirement needs review.")
     elif seniority in {"junior", "graduate", "entry", "trainee", "intern", "associate"}:
-        matches.append("Seniority appears compatible with an early-career search.")
+        if experience is False:
+            matches.append("Seniority appears compatible with an early-career search.")
+        elif experience:
+            matches.append("Seniority wording is compatible with the profile's recorded professional experience.")
+        else:
+            unknown.append("Seniority wording is not contradicted by the profile, which does not record whether the candidate has professional experience.")
     elif seniority == "unknown":
         unknown.append("Seniority is not stated clearly.")
     for requirement in job.requirements:
         term = requirement.text.lower()
         if term in profile.skills:
-            score += 8 if requirement.kind == "mandatory" else 4
+            score += weights["confirmed_skill"]["mandatory" if requirement.kind == "mandatory" else "other"]
             matches.append(f"Confirmed skill: {requirement.text}.")
         elif "master" in term:
-            if requirement.kind == "mandatory":
-                score -= 50; excluded = True; concerns.append("A Master's degree is explicitly required; the profile records a Bachelor's degree.")
+            candidate = profile.degree_level
+            meets = degree_meets(candidate, "master")
+            if meets:
+                matches.append(f"A Master's degree is required and the profile records a {DEGREE_LABELS[candidate]} degree.")
+            elif meets is False:
+                label = DEGREE_LABELS[candidate]
+                if requirement.kind == "mandatory":
+                    score -= weights["degree_required_penalty"]; excluded = True; concerns.append(f"A Master's degree is explicitly required; the profile records a {label} degree.")
+                else:
+                    score -= weights["degree_mentioned"]; gaps.append(f"A Master's degree is mentioned but the profile records a {label} degree.")
+            elif requirement.kind == "mandatory":
+                unknown.append("A Master's degree is required, but the profile's highest completed degree is not recognized; the requirement needs review.")
             else:
-                score -= 10; gaps.append("A Master's degree is mentioned but the profile records a Bachelor's degree.")
+                unknown.append("A Master's degree is mentioned; the profile's highest completed degree is not recognized.")
         elif "year" in term and "experience" in term:
-            score -= 25 if requirement.kind == "mandatory" else 8
-            concerns.append("Professional-experience requirement is not satisfied by projects or thesis work.")
-        elif requirement.kind == "mandatory":
-            score -= 18; gaps.append(f"Mandatory requirement not confirmed by profile: {requirement.text}.")
-        elif requirement.kind in {"preferred", "useful"}:
-            score -= 4; gaps.append(f"Preferred/useful requirement not confirmed: {requirement.text}.")
+            if experience is False:
+                score -= weights["experience_requirement"]["mandatory" if requirement.kind == "mandatory" else "preferred"]
+                concerns.append("Professional-experience requirement is not satisfied by projects or thesis work.")
+            elif experience:
+                unknown.append(f"Professional-experience requirement needs review: the profile records professional experience but not the years stated by {requirement.text}.")
+            else:
+                unknown.append(f"Professional-experience requirement needs review: the profile does not record whether the candidate meets the years stated by {requirement.text}.")
+        # The profile is not an exhaustive list of what the candidate knows, so a requirement it does
+        # not list is unknown rather than a confirmed gap: record it for review and score nothing. The
+        # `missing_requirement` weights stay defined for requirements a future rule can prove unmet.
+        elif requirement.kind in {"mandatory", "preferred", "useful"}:
+            label = {"mandatory": "Mandatory", "preferred": "Preferred", "useful": "Useful"}[requirement.kind]
+            unknown.append(f"{label} requirement could not be verified from the profile: {requirement.text}.")
         else:
             unknown.append(f"Requirement needs review: {requirement.text}.")
     preferred_languages = tuple(str(language).lower() for language in config.get("preferred_languages") or SECONDARY_PREFERRED_LANGUAGES)
     language_tier = _secondary_language_signal(job, preferred_languages)
     if language_tier:
-        score += _SECONDARY_LANGUAGE_BONUS[language_tier]
+        score += weights["preferred_language"][language_tier]
         matches.append(f"{', '.join(language.title() for language in preferred_languages)} is a secondary preference and appears in the {_SECONDARY_LANGUAGE_TIERS[language_tier]}.")
     if job.metadata.get("description_is_snippet"):
-        score -= 5
+        score -= weights["source_snippet"]
         unknown.append("The source provides only a description snippet; additional requirements may be unavailable.")
     elif not job.requirements:
-        score -= 5
+        score -= weights["no_requirements"]
         unknown.append("The listing does not expose explicit requirements; technical qualifications could not be fully verified.")
     geographic = resolve_location(job.location, config["location_preferences"])
     if geographic.status == LocationStatus.OUTSIDE_RADIUS:
@@ -131,12 +203,15 @@ def evaluate(job: Job, profile: Profile, config: dict) -> Evaluation:
         else:
             matches.append("Explicitly remote job is allowed beyond the configured geographic radius.")
     elif geographic.status == LocationStatus.UNKNOWN:
-        unknown.append("Job city could not be resolved for geographic-radius evaluation.")
+        if not geographic.origin_resolved:
+            unknown.append(f"The configured location origin {config['location_preferences']['origin']!r} could not be resolved, so the geographic radius was not applied; check location_preferences.origin.")
+        if not geographic.job_location_resolved:
+            unknown.append("Job city could not be resolved for geographic-radius evaluation.")
     if job.arrangement == "remote":
-        score += 6; matches.append("Germany-wide remote work is enabled in the configuration.")
+        score += weights["remote"]; matches.append("Germany-wide remote work is enabled in the configuration.")
     elif job.arrangement in {"hybrid", "onsite"}:
         if geographic.status == LocationStatus.WITHIN_RADIUS:
-            score += 4; matches.append("Location is within the configured geographic radius.")
+            score += weights["onsite_or_hybrid_within_radius"]; matches.append("Location is within the configured geographic radius.")
         elif not job.location:
             unknown.append("Hybrid/onsite posting has no stated location.")
     else:
@@ -152,5 +227,5 @@ def evaluate(job: Job, profile: Profile, config: dict) -> Evaluation:
     if any(term in body for term in sponsorship_terms):
         unknown.append("Work-authorization or sponsorship wording requires verification; no legal conclusion is made.")
     score = max(0, min(100, score))
-    assessment = "rejected" if excluded else "recommended" if score >= 60 else "borderline"
+    assessment = "rejected" if excluded else "recommended" if score >= settings["recommended_threshold"] else "borderline"
     return Evaluation(score, assessment, excluded, matches, gaps, concerns, unknown)

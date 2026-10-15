@@ -1,5 +1,5 @@
 {
-  "_instructions": "Template only. Copy this file to data/profile.json and replace every placeholder with your own facts; the application reads the documented keys below. data/profile.json is ignored by Git.",
+  "_instructions": "Template only. Copy this file to data/profile.json and replace every placeholder with your own facts; the application reads the documented keys below. data/profile.json is ignored by Git. Give each education entry a level of bachelor, master, phd or doctorate: the highest of those is compared with a job's degree requirement, and any other value (for example additional education) counts as no recognized degree. Set professional_experience to true or false to state whether you have professional experience; null or an omitted key means the application treats it as unknown and never assumes either way.",
   "identity": {
     "name": "Sample Candidate",
     "city": "Berlin, Germany"
@@ -15,14 +15,14 @@
       "level": "bachelor",
       "degree": "Bachelor of Science in Your Subject",
       "institution": "Example University",
-      "period": "October 2019 - November 2025",
+      "period": "October 2020 - November 2023",
       "detail": "Minor in Your Minor."
     },
     {
       "level": "additional education",
       "degree": "Introductory course in Your Subject",
       "institution": "Example Institute",
-      "period": "February 2018 - June 2018",
+      "period": "February 2020 - June 2023",
       "detail": "Additional education; not a degree."
     }
   ],

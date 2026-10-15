@@ -15,9 +15,18 @@ class LocationStatus(str, Enum):
 
 @dataclass(frozen=True)
 class LocationResult:
+    """The outcome of the geographic radius check.
+
+    `origin_resolved` and `job_location_resolved` only carry information for `UNKNOWN` results: they
+    say which side of the check could not be resolved, so callers can report the configured origin
+    instead of blaming a job city that resolved perfectly well.
+    """
+
     status: LocationStatus
     city: str | None = None
     distance_km: float | None = None
+    origin_resolved: bool = True
+    job_location_resolved: bool = True
 
 
 # Small deterministic fallback for the German locations used by the application.
@@ -135,8 +144,8 @@ def resolve_location(location: str | None, preferences: dict) -> LocationResult:
     origin = str(preferences.get("origin", "")).strip()
     origin_coordinates = _city_coordinates(origin) if origin else None
     coordinates = _city_coordinates(city) if city else None
-    if not city or not origin_coordinates or not coordinates:
-        return LocationResult(LocationStatus.UNKNOWN, city=city)
+    if not origin_coordinates or not coordinates:
+        return LocationResult(LocationStatus.UNKNOWN, city=city, origin_resolved=origin_coordinates is not None, job_location_resolved=coordinates is not None)
     lat1, lon1 = map(math.radians, origin_coordinates)
     lat2, lon2 = map(math.radians, coordinates)
     delta_lat, delta_lon = lat2 - lat1, lon2 - lon1

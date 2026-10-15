@@ -10,6 +10,50 @@ class ValidationError(ValueError):
     pass
 
 
+# Optional `evaluation` block of the search configuration. The block is new, so unknown keys inside
+# it are rejected instead of ignored: a mistyped weight would otherwise silently change nothing.
+# Weights are non-negative magnitudes; `job_agent.evaluator.DEFAULT_EVALUATION_SETTINGS` holds the
+# shipped values and the tests keep this schema and those defaults in sync.
+EVALUATION_TOP_LEVEL_KEYS = ("base_score", "recommended_threshold", "weights")
+EVALUATION_WEIGHT_SCHEMA = {
+    "target_role": "number",
+    "secondary_query": "number",
+    "senior_penalty": "number",
+    "confirmed_skill": {"mandatory": "number", "other": "number"},
+    "missing_requirement": {"mandatory": "number", "preferred": "number", "useful": "number"},
+    "degree_required_penalty": "number",
+    "degree_mentioned": "number",
+    "experience_requirement": {"mandatory": "number", "preferred": "number"},
+    "source_snippet": "number",
+    "no_requirements": "number",
+    "remote": "number",
+    "onsite_or_hybrid_within_radius": "number",
+    "preferred_language": {"requirement": "number", "qualification": "number", "description": "number"},
+}
+
+
+# Recognized completed degrees, mapped to their rank. The profile is the only source of candidate
+# education: a level that is not listed here (for example "additional education") is unknown, and
+# unknown never means that the candidate lacks the degree.
+DEGREE_RANKS = {"bachelor": 1, "master": 2, "phd": 3, "doctorate": 3}
+DEGREE_LABELS = {"bachelor": "Bachelor's", "master": "Master's", "phd": "doctoral", "doctorate": "doctoral"}
+
+
+def _education_level(entry) -> str | None:
+    """The normalized level of one education entry, or None when it is missing or not a string."""
+    level = entry.get("level") if isinstance(entry, dict) else None
+    return level.strip().lower() if isinstance(level, str) and level.strip() else None
+
+
+def degree_meets(candidate_level: str | None, required_level: str) -> bool | None:
+    """Whether a recorded degree satisfies a requirement: None when the candidate level is unknown."""
+    candidate = DEGREE_RANKS.get(candidate_level or "")
+    required = DEGREE_RANKS.get(required_level)
+    if candidate is None or required is None:
+        return None
+    return candidate >= required
+
+
 @dataclass(frozen=True)
 class Profile:
     data: dict
@@ -19,8 +63,10 @@ class Profile:
         return {item["name"].lower() for item in self.data["skills"]}
 
     @property
-    def degree_level(self) -> str:
-        return self.data["education"][0]["level"].lower()
+    def degree_level(self) -> str | None:
+        """The highest completed degree level recorded in `education`, or None when none is recognized."""
+        levels = [level for level in map(_education_level, self.data["education"]) if level in DEGREE_RANKS]
+        return max(levels, key=lambda level: DEGREE_RANKS[level]) if levels else None
 
     @property
     def languages(self) -> dict[str, str]:
@@ -29,6 +75,12 @@ class Profile:
     @property
     def country_of_residence(self) -> str | None:
         return self.data.get("employment_eligibility", {}).get("country_of_residence")
+
+    @property
+    def has_professional_experience(self) -> bool | None:
+        """True/False when the profile records the status, None when it does not record it."""
+        value = self.data.get("professional_experience")
+        return value if isinstance(value, bool) else None
 
 
 def load_json(path: str | Path) -> dict:
@@ -40,7 +92,7 @@ def load_json(path: str | Path) -> dict:
 
 def load_profile(path: str | Path) -> Profile:
     data = load_json(path)
-    required = ("identity", "education", "skills", "languages", "professional_experience")
+    required = ("identity", "education", "skills", "languages")
     missing = [field for field in required if field not in data]
     if missing:
         raise ValidationError(f"Profile is missing required fields: {', '.join(missing)}")
@@ -48,8 +100,9 @@ def load_profile(path: str | Path) -> Profile:
         raise ValidationError("Profile needs at least one education entry.")
     if not all(isinstance(x, dict) and x.get("name") for x in data["skills"]):
         raise ValidationError("Every skill needs a name.")
-    if data["professional_experience"] is not False:
-        raise ValidationError("MVP profile must explicitly state whether professional experience exists.")
+    experience = data.get("professional_experience")
+    if experience is not None and not isinstance(experience, bool):
+        raise ValidationError("Profile professional_experience must be true, false or null; omit the key when the status is unknown.")
     return Profile(data)
 
 
@@ -72,4 +125,51 @@ def load_config(path: str | Path) -> dict:
         raise ValidationError("Configuration location_preferences.max_distance_km must be a positive number.")
     if not isinstance(preferences.get("remote_only_beyond_distance"), bool):
         raise ValidationError("Configuration location_preferences.remote_only_beyond_distance must be boolean.")
+    if "evaluation" in data:
+        _validate_evaluation(data["evaluation"])
     return data
+
+
+def _is_number(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _validate_evaluation_number(path: str, value, *, maximum: float | None = None) -> None:
+    if not _is_number(value):
+        raise ValidationError(f"Configuration {path} must be a number.")
+    if value < 0:
+        raise ValidationError(f"Configuration {path} must not be negative.")
+    if maximum is not None and value > maximum:
+        raise ValidationError(f"Configuration {path} must be at most {maximum:g}.")
+
+
+def _validate_weight_group(path: str, values: dict, schema: dict) -> None:
+    unknown = sorted(key for key in values if key not in schema)
+    if unknown:
+        raise ValidationError(f"Configuration {path} has unknown setting(s): {', '.join(unknown)}.")
+    for key, expected in schema.items():
+        if key not in values:
+            continue
+        value = values[key]
+        if isinstance(expected, dict):
+            if not isinstance(value, dict):
+                raise ValidationError(f"Configuration {path}.{key} must be an object.")
+            _validate_weight_group(f"{path}.{key}", value, expected)
+        else:
+            _validate_evaluation_number(f"{path}.{key}", value)
+
+
+def _validate_evaluation(evaluation) -> None:
+    if not isinstance(evaluation, dict):
+        raise ValidationError("Configuration 'evaluation' must be an object.")
+    unknown = sorted(key for key in evaluation if key not in EVALUATION_TOP_LEVEL_KEYS)
+    if unknown:
+        raise ValidationError(f"Configuration evaluation has unknown setting(s): {', '.join(unknown)}.")
+    for key in ("base_score", "recommended_threshold"):
+        if key in evaluation:
+            _validate_evaluation_number(f"evaluation.{key}", evaluation[key], maximum=100)
+    if "weights" in evaluation:
+        weights = evaluation["weights"]
+        if not isinstance(weights, dict):
+            raise ValidationError("Configuration evaluation.weights must be an object.")
+        _validate_weight_group("evaluation.weights", weights, EVALUATION_WEIGHT_SCHEMA)

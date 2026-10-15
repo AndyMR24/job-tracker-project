@@ -6,6 +6,7 @@ typography matters, so it renders identically regardless of console code page.
 """
 from __future__ import annotations
 
+from datetime import datetime
 from html import escape
 from urllib.parse import urlencode
 
@@ -63,6 +64,8 @@ form.inline { display:inline-block; margin:0 4px 4px 0; }
 .row-actions { white-space:nowrap; }
 ul.plain { margin:6px 0 0; padding-left:18px; }
 ul.plain li { margin:2px 0; }
+.log { max-height:260px; overflow-y:auto; background:#fbfcfe; border:1px solid var(--line); border-radius:6px; margin:6px 0 0; padding:8px 10px 8px 26px; }
+.log li { margin:2px 0; }
 pre.body { white-space:pre-wrap; background:#fbfcfe; border:1px solid var(--line); border-radius:6px; padding:10px; max-height:420px; overflow:auto; margin:0; font-family:ui-monospace, Consolas, monospace; font-size:12.5px; }
 .two-col { display:grid; grid-template-columns:minmax(0,2fr) minmax(280px,1fr); gap:16px; align-items:start; }
 .three-col { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:16px; align-items:start; }
@@ -74,8 +77,37 @@ dl.facts dd { margin:0; }
 
 SEARCH_SCRIPT = """
 <script>
+function formatTimestamp(value) {
+  if (!value) { return ""; }
+  const match = value.match(/^(\\d{4})-(\\d{2})-(\\d{2})(?:[T ](\\d{2}):(\\d{2}))?/);
+  if (!match) { return value; }
+  const date = match[3] + "-" + match[2] + "-" + match[1];
+  const hasTime = value.indexOf("T") >= 0 || value.indexOf(":") >= 0;
+  return hasTime && match[4] ? date + ", " + match[4] + ":" + match[5] : date;
+}
 function logLine(text) { const item = document.createElement("li"); item.textContent = text; return item; }
 function statusFact(label, value) { const line = document.createElement("p"); line.className = "small"; line.textContent = label + ": " + value; return line; }
+let renderedLog = null;
+let lastFinished;
+let noticeTimer = null;
+function hideNotice() {
+  const box = document.getElementById("search-notice");
+  if (box) { box.hidden = true; }
+  if (noticeTimer) { clearTimeout(noticeTimer); noticeTimer = null; }
+}
+function showNotice(text, failed) {
+  const box = document.getElementById("search-notice");
+  if (!box) { return; }
+  box.textContent = text;
+  box.className = failed ? "error" : "notice";
+  box.hidden = false;
+  if (noticeTimer) { clearTimeout(noticeTimer); }
+  noticeTimer = setTimeout(function () { box.hidden = true; noticeTimer = null; }, 6000);
+}
+function dismissStartBanner() {
+  const banner = document.querySelector("main > .notice, main > .error");
+  if (banner) { banner.hidden = true; }
+}
 async function refreshSearchStatus() {
   try {
     const response = await fetch("/search/status.json", { headers: { "Accept": "application/json" } });
@@ -93,26 +125,61 @@ async function refreshSearchStatus() {
     box.append(statusFact("Queries", state.queries_done + " / " + state.queries_total));
     box.append(statusFact("Public results", state.found));
     box.append(statusFact("Stored", state.stored + " (" + state.new + " new, " + state.known + " known, " + state.excluded + " excluded)"));
-    if (state.started_at) { box.append(statusFact("Started", state.started_at.slice(0, 19))); }
-    if (state.finished_at) { box.append(statusFact("Finished", state.finished_at.slice(0, 19))); }
+    if (state.started_at) { box.append(statusFact("Started (UTC)", formatTimestamp(state.started_at))); }
+    if (state.finished_at) { box.append(statusFact("Finished (UTC)", formatTimestamp(state.finished_at))); }
     const log = document.getElementById("search-log");
-    log.replaceChildren();
-    (state.log.slice(-20)).forEach(function (entry) { log.append(logLine(entry)); });
+    const entries = (state.log || []).slice(-200);
+    const joined = entries.join("\\n");
+    if (joined !== renderedLog) {
+      const atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
+      const previousTop = log.scrollTop;
+      log.replaceChildren();
+      entries.forEach(function (entry) { log.append(logLine(entry)); });
+      renderedLog = joined;
+      log.scrollTop = atBottom ? log.scrollHeight : previousTop;
+    }
     const errors = document.getElementById("search-errors");
     errors.replaceChildren();
     (state.errors.length ? state.errors : ["No source errors."]).forEach(function (entry) { errors.append(logLine(entry)); });
+    const finished = state.finished_at || null;
+    if (lastFinished === undefined) {
+      lastFinished = finished;
+    } else if (finished && finished !== lastFinished) {
+      lastFinished = finished;
+      showNotice(state.message, state.message.indexOf("Search failed") === 0);
+      dismissStartBanner();
+    } else if (!finished) {
+      lastFinished = null;
+    }
+    if (state.running) { hideNotice(); }
   } catch (error) {
     return;
   }
 }
 refreshSearchStatus();
 setInterval(refreshSearchStatus, 2000);
+setTimeout(dismissStartBanner, 6000);
 </script>
 """
 
 
 def esc(value) -> str:
     return escape("" if value is None else str(value))
+
+
+def timestamp(value) -> str:
+    """Render a stored timestamp as DD-MM-YYYY, HH:MM (date only when no time is stored).
+
+    Values are shown exactly as stored, without timezone conversion: the database records UTC.
+    """
+    text = "" if value is None else str(value).strip()
+    if not text:
+        return ""
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return text
+    return parsed.strftime("%d-%m-%Y, %H:%M") if ("T" in text or ":" in text) else parsed.strftime("%d-%m-%Y")
 
 
 def options_html(values, labels=None, selected=None) -> str:
@@ -197,7 +264,7 @@ def decision_forms(record: dict, next_path: str) -> str:
 def job_table(records, *, actions: bool = False) -> str:
     if not records:
         return '<div class="card muted">No jobs match the current selection.</div>'
-    head = ["ID", "Score", "Title", "Company", "Location", "Arrangement", "Source", "Status", "Discovered"]
+    head = ["ID", "Score", "Title", "Company", "Location", "Arrangement", "Source", "Status", "Discovered (UTC)"]
     if actions:
         head.append("Actions")
     rows = []
@@ -205,7 +272,7 @@ def job_table(records, *, actions: bool = False) -> str:
         cells = [job_link(record["id"]), score_badge(record),
                  '<a href="/jobs/%s">%s</a>' % (esc(record["id"]), esc(record["title"])),
                  esc(record["company"] or "unknown"), esc(record["location"] or "unknown"), esc(record["arrangement"]),
-                 esc(record["source"]), status_badge(record), esc((record["discovered_at"] or "")[:10])]
+                 esc(record["source"]), status_badge(record), esc(timestamp(record["discovered_at"]))]
         if actions:
             posting = '<a class="small" href="%s" target="_blank" rel="noopener noreferrer">posting</a> ' % esc(record["source_url"]) if record["source_url"] else ""
             cells.append('<span class="row-actions">%s%s</span>' % (posting, decision_forms(record, "/saved")))
@@ -294,7 +361,7 @@ def job_detail_page(record, trail, cv_versions) -> str:
              ("Employment type", esc(record["employment_type"] or "unknown")), ("Salary", esc(record["salary"] or "unknown")),
              ("Source", esc(record["source"])), ("External ID", esc(record["external_job_id"] or "-")),
              ("Original posting", link(record["source_url"], record["source_url"])),
-             ("Discovered", esc((record["discovered_at"] or "")[:19])), ("Last seen", esc((record["last_seen_at"] or "")[:19])),
+             ("Discovered (UTC)", esc(timestamp(record["discovered_at"]))), ("Last seen (UTC)", esc(timestamp(record["last_seen_at"]))),
              ("Status", esc(dashboard.STATUS_LABELS.get(record["status"], record["status"])))]
     if record["rejection_reason"]:
         facts.append(("Rejection reason", esc(record["rejection_reason"])))
@@ -318,12 +385,17 @@ def job_detail_page(record, trail, cv_versions) -> str:
         "".join('<option value="%s">%s</option>' % (esc(reason), esc(reason)) for reason in dashboard.REJECTION_REASONS),
         esc(record["id"]), esc(record["id"]), options_html(dashboard.APPLICATION_STATUSES, labels=dashboard.STATUS_LABELS))
     if cv_versions:
-        cv_body = '<ul class="plain">%s</ul>' % "".join('<li><a href="/jobs/%s/cv">open draft</a> <span class="small muted">%s &middot; %s</span></li>' % (esc(record["id"]), esc(row["path"]), esc((row["created_at"] or "")[:19])) for row in cv_versions)
+        cv_body = '<ul class="plain">%s</ul>' % "".join('<li><a href="/jobs/%s/cv">open draft</a> <span class="small muted">%s &middot; %s</span></li>' % (esc(record["id"]), esc(row["path"]), esc(timestamp(row["created_at"]))) for row in cv_versions)
     else:
         cv_body = '<p class="small muted">No CV draft generated for this job yet.</p>'
-    trail_body = '<ul class="plain small">%s</ul>' % "".join('<li>%s &middot; %s%s</li>' % (esc((item["created_at"] or "")[:19]), esc(item["event"]), (" &middot; " + esc(item["details"])) if item["details"] else "") for item in trail) if trail else '<p class="small muted">No events recorded yet.</p>'
+    trail_body = '<ul class="plain small">%s</ul>' % "".join('<li>%s &middot; %s%s</li>' % (esc(timestamp(item["created_at"])), esc(item["event"]), (" &middot; " + esc(item["details"])) if item["details"] else "") for item in trail) if trail else '<p class="small muted">No events recorded yet.</p>'
     right = actions + '<div class="card"><h3>CV drafts</h3>%s</div>' % cv_body + '<div class="card"><h3>History for this job</h3>%s</div>' % trail_body + '<div class="card"><h3>Navigation</h3><p class="small"><a href="/jobs">&larr; back to jobs</a> &middot; <a href="/saved">saved</a> &middot; <a href="/applications">applications</a></p></div>'
-    left = '<div class="card"><h3>Listing</h3><dl class="facts">%s</dl></div>' % facts_html + evaluation_card + '<div class="card"><h3>Requirements</h3><div class="wide"><table><thead><tr><th>Requirement</th><th>Kind</th><th>Category</th></tr></thead><tbody>%s</tbody></table></div></div>' % requirement_rows + text_card("Description", record["description"]) + text_card("Qualification text", record["qualifications"]) + text_card("Responsibilities", record["responsibilities"])
+    requirements_card = ('<div class="card"><h3>Requirements</h3><p class="small muted">"Stated as" repeats how firmly the listing words each requirement:'
+                         ' mandatory, preferred, useful, or unknown when the wording is unclear. It comes from the listing, not from your profile.</p>'
+                         '<div class="wide"><table><thead><tr><th>Requirement</th><th title="mandatory, preferred, useful or unknown, as stated by the listing">Stated as</th>'
+                         '<th title="Requirement area recorded by the source or import">Area</th></tr></thead><tbody>%s</tbody></table></div></div>') % requirement_rows
+    left = ('<div class="card"><h3>Listing</h3><dl class="facts">%s</dl></div>' % facts_html + evaluation_card + requirements_card +
+            text_card("Description", record["description"]) + text_card("Qualification text", record["qualifications"]) + text_card("Responsibilities", record["responsibilities"]))
     return '<h2>%s <span class="id-chip" title="internal job id used by the CLI and the database">#%s</span> %s</h2><div class="two-col"><div>%s</div><div>%s</div></div>' % (esc(record["title"]), esc(record["id"]), status_badge(record), left, right)
 
 
@@ -338,7 +410,7 @@ def applications_page(applications, candidates, statuses) -> str:
 <td>%s</td><td>%s</td><td>%s</td><td><form class="inline" method="post" action="/jobs/%s/application"><select name="status">%s</select>
 <input type="date" name="date"><input type="text" name="notes" placeholder="notes" size="12"><button type="submit">Update</button></form></td></tr>""" % (
         esc(row["job_id"]), esc(row["title"]), esc(row["company"] or ""), esc(dashboard.STATUS_LABELS.get(row["status"], row["status"])),
-        esc(row["application_date"] or "-"), esc((row["updated_at"] or "")[:19]), esc(row["notes"] or ""), esc(row["job_id"]),
+        esc(timestamp(row["application_date"]) or "-"), esc(timestamp(row["updated_at"])), esc(row["notes"] or ""), esc(row["job_id"]),
         options_html(statuses, labels=dashboard.STATUS_LABELS, selected=row["status"])) for row in applications)
     if not rows:
         rows = '<tr><td colspan="6" class="muted">No application tracked yet.</td></tr>'
@@ -350,16 +422,16 @@ def applications_page(applications, candidates, statuses) -> str:
         '<div><label for="notes">Notes</label><input id="notes" type="text" name="notes" size="22"></div>'
         '<div><label>&nbsp;</label><button class="primary" type="submit">Record</button></div></form>') % (picker, options_html(statuses, labels=dashboard.STATUS_LABELS))
     return ('<h2>Applications <span class="small muted">%s tracked</span></h2>' % len(applications)) + \
-        '<div class="wide"><table><thead><tr><th>Job</th><th>Status</th><th>Applied on</th><th>Updated</th><th>Notes</th><th>Change status</th></tr></thead><tbody>%s</tbody></table></div>' % rows + \
+        '<div class="wide"><table><thead><tr><th>Job</th><th>Status</th><th>Applied on</th><th>Updated (UTC)</th><th>Notes</th><th>Change status</th></tr></thead><tbody>%s</tbody></table></div>' % rows + \
         '<div class="card"><h3>Track another application</h3>%s<p class="small muted">This records your manual progress only. Applications are never submitted by this tool.</p></div>' % tracker
 
 
 def history_page(events, search_events) -> str:
-    searches = "".join('<li>%s &middot; %s%s</li>' % (esc((item["created_at"] or "")[:19]), esc(item["event"]), (" &middot; " + esc(item["details"])) if item["details"] else "") for item in search_events) or '<li class="muted">No searches recorded yet.</li>'
-    rows = "".join('<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>' % (esc((item["created_at"] or "")[:19]), esc(item["event"]), job_link(item["job_id"]) if item["job_id"] else "-", esc(item["details"] or "")) for item in events) or '<tr><td colspan="4" class="muted">No events recorded yet.</td></tr>'
+    searches = "".join('<li>%s &middot; %s%s</li>' % (esc(timestamp(item["created_at"])), esc(item["event"]), (" &middot; " + esc(item["details"])) if item["details"] else "") for item in search_events) or '<li class="muted">No searches recorded yet.</li>'
+    rows = "".join('<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>' % (esc(timestamp(item["created_at"])), esc(item["event"]), job_link(item["job_id"]) if item["job_id"] else "-", esc(item["details"] or "")) for item in events) or '<tr><td colspan="4" class="muted">No events recorded yet.</td></tr>'
     return ('<h2>History</h2><div class="card"><h3>Search history</h3><ul class="plain small">%s</ul>'
             '<p class="small muted">Searches store public job results only. No profile, CV or contact data is transmitted.</p></div>'
-            '<h3>Audit log</h3><div class="wide"><table><thead><tr><th>When</th><th>Event</th><th>Job</th><th>Details</th></tr></thead><tbody>%s</tbody></table></div>') % (searches, rows)
+            '<h3>Audit log</h3><div class="wide"><table><thead><tr><th>When (UTC)</th><th>Event</th><th>Job</th><th>Details</th></tr></thead><tbody>%s</tbody></table></div>') % (searches, rows)
 
 
 def sources_page(statistics, summary, config) -> str:
@@ -367,7 +439,7 @@ def sources_page(statistics, summary, config) -> str:
 <td class="num">%s</td><td class="num">%s</td><td class="num">%s</td><td>%s</td><td class="small">%s</td></tr>""" % (
         esc(item["source"]), item["jobs"], esc(item["average_score"] if item["average_score"] is not None else "-"),
         item["recommended"], item["borderline"], item["excluded"], item["saved"], item["applied"], item["remote"],
-        esc((item["newest"] or "")[:10]), esc(" | ".join(item["samples"]))) for item in statistics)
+        esc(timestamp(item["newest"])), esc(" | ".join(item["samples"]))) for item in statistics)
     if not rows:
         rows = '<tr><td colspan="11" class="muted">No jobs stored yet.</td></tr>'
     families = "".join('<li><strong>%s</strong>: %s</li>' % (esc(family), esc(", ".join(queries) if queries else "none")) for family, queries in config.get("search_queries", {}).items()) or '<li class="muted">No queries configured.</li>'
@@ -376,7 +448,7 @@ def sources_page(statistics, summary, config) -> str:
     statuses = "".join('<li>%s: %s</li>' % (esc(dashboard.STATUS_LABELS.get(name, name)), count) for name, count in sorted(summary["by_status"].items())) or '<li class="muted">No data</li>'
     return ('<h2>Sources and statistics</h2>'
             '<div class="wide"><table><thead><tr><th>Source</th><th class="num">Jobs</th><th class="num">Avg score</th><th class="num">Recommended</th><th class="num">Borderline</th>'
-            '<th class="num">Excluded</th><th class="num">Saved</th><th class="num">Applied</th><th class="num">Remote</th><th>Newest</th><th>Top titles</th></tr></thead><tbody>%s</tbody></table></div>'
+            '<th class="num">Excluded</th><th class="num">Saved</th><th class="num">Applied</th><th class="num">Remote</th><th>Newest (UTC)</th><th>Top titles</th></tr></thead><tbody>%s</tbody></table></div>'
             '<div class="three-col"><div class="card"><h3>Work arrangements</h3><ul class="plain">%s</ul></div>'
             '<div class="card"><h3>Statuses</h3><ul class="plain">%s</ul></div>'
             '<div class="card"><h3>Location preferences</h3><dl class="facts"><dt>Origin</dt><dd>%s</dd><dt>Radius</dt><dd>%s km</dd><dt>Remote beyond radius</dt><dd>%s</dd></dl></div>'
@@ -386,8 +458,9 @@ def sources_page(statistics, summary, config) -> str:
 
 
 def search_page(state, search_events, source_names, configured_queries) -> str:
-    history = "".join('<li>%s &middot; %s%s</li>' % (esc((item["created_at"] or "")[:19]), esc(item["event"]), (" &middot; " + esc(item["details"])) if item["details"] else "") for item in search_events) or '<li class="muted">No searches recorded yet.</li>'
+    history = "".join('<li>%s &middot; %s%s</li>' % (esc(timestamp(item["created_at"])), esc(item["event"]), (" &middot; " + esc(item["details"])) if item["details"] else "") for item in search_events) or '<li class="muted">No searches recorded yet.</li>'
     return """<h2>Search public job sources</h2>
+<div class="notice" id="search-notice" hidden></div>
 <div class="two-col">
 <div>
 <div class="card"><h3>Quick search</h3>
@@ -406,7 +479,7 @@ def search_page(state, search_events, source_names, configured_queries) -> str:
 <div class="card" id="search-status"><p class="small muted">Loading status...</p></div>
 </div>
 <div>
-<div class="card"><h3>Progress log</h3><ul class="plain small" id="search-log"><li class="muted">Nothing logged yet.</li></ul></div>
+<div class="card"><h3>Progress log</h3><p class="small muted">Keeps the newest 200 lines, scrolls on its own, and follows new output while you stay at the bottom.</p><ul class="log small" id="search-log"><li class="muted">Nothing logged yet.</li></ul></div>
 <div class="card"><h3>Source errors</h3><ul class="plain small" id="search-errors"><li class="muted">No source errors.</li></ul></div>
 <div class="card"><h3>Recent searches</h3><ul class="plain small">%s</ul></div>
 </div>

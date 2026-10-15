@@ -40,11 +40,12 @@ logic.
 ## Architecture and responsibilities
 
 `profile.py` validates the editable factual data. `load_profile` requires `identity`, `education`,
-`skills`, `languages` and an explicit `professional_experience`, at least one education entry and a
-name on every skill. `load_config` requires the list fields `target_roles`, `locations` and
-`work_arrangements`, a `search_queries` object with non-empty `primary` and `secondary` lists, and a
-`location_preferences` object with a non-empty `origin`, a positive `max_distance_km` and a boolean
-`remote_only_beyond_distance`.
+`skills` and `languages`, at least one education entry and a name on every skill, and, when the
+`professional_experience` key is present, a literal `true`, `false` or `null` (`null` or an absent
+key means unknown; `Profile.has_professional_experience` exposes the three states). `load_config`
+requires the list fields `target_roles`, `locations` and `work_arrangements`, a `search_queries`
+object with non-empty `primary` and `secondary` lists, and a `location_preferences` object with a
+non-empty `origin`, a positive `max_distance_km` and a boolean `remote_only_beyond_distance`.
 
 `normalizer.py` gives incomplete listings a consistent shape without inventing fields: a title is
 mandatory, an unrecognised arrangement becomes `unknown`, seniority falls back to a keyword scan of
@@ -70,10 +71,16 @@ per-source de-duplication, optional error tolerance) and the normalize/evaluate/
 both `cli.py` and the dashboard call it, so search behavior is defined once. `dashboard.py` contains
 read-only projections (filtering, sorting, aggregates, audit and search history) over rows returned
 by `Store`; evaluator-excluded jobs and user-rejected jobs are hidden unless a filter asks for them.
-`webui.py` renders server-side HTML and escapes every dynamic value. `webapp.py` serves it with the
-standard library HTTP server: routes map onto `Store`, `discovery`, `cv.generate` and `dashboard`,
-generated PDFs are served from the recorded path, and dashboard-initiated searches run in one
-background thread at a time (guarded by a lock) with a JSON status endpoint that the page polls.
+`webui.py` renders server-side HTML and escapes every dynamic value, formats stored timestamps with
+`webui.timestamp()` (DD-MM-YYYY, HH:MM, presentation only - the stored UTC values are shown without
+conversion) and labels `Requirement.kind` as "Stated as" without changing the underlying data. The
+search page script keeps a scrollable log that follows new lines only while the reader stays at the
+bottom, and shows an auto-dismissing notification when `finished_at` changes in the status payload
+(the completion summary, or the failure message when the run ended with an error). `webapp.py`
+serves the pages with the standard library HTTP server: routes map onto `Store`, `discovery`,
+`cv.generate` and `dashboard`, generated PDFs are served from the recorded path, and
+dashboard-initiated searches run in one background thread at a time (guarded by a lock) with a JSON
+status endpoint that the page polls.
 
 Start it with `job-agent dashboard --port 8771` or `python -m job_agent.webapp --port 8771`. It
 binds to 127.0.0.1 by default and adds no dependency beyond the standard library.
@@ -107,28 +114,33 @@ job reference and short details - and avoid unnecessary personal information.
 
 `evaluate` returns one `Evaluation` carrying `score`, `assessment`, `excluded`, `strong_matches`,
 `potential_gaps`, `concerns` and `uncertainties`. The assessment is `rejected` when the job is
-excluded, `recommended` for a strong match and `borderline` in between; `evaluator.py` defines the
-starting score and the exact boundaries.
+excluded, `recommended` for a strong match and `borderline` in between. `DEFAULT_EVALUATION_SETTINGS`
+in `evaluator.py` defines the starting score, the recommended boundary and every weight; the optional
+`evaluation` block of the search configuration overrides individual settings through
+`evaluation_settings()` and is validated by `profile.load_config`.
 
 Only four findings exclude a job outright:
 
-- a senior-level title (senior, lead, principal, staff, head, director) while the profile has no
-  professional employment;
-- an explicitly mandatory Master's degree when the profile records a Bachelor's;
+- a senior-level title (senior, lead, principal, staff, head, director) while the profile records
+  that the candidate has no professional experience;
+- an explicitly mandatory Master's degree when the profile records a lower completed degree;
 - a resolved city outside the configured radius, unless the job is explicitly `remote` and
   `remote_only_beyond_distance` is enabled;
 - a published country restriction that excludes the profile's country of residence.
 
 The remaining adjustments are all relative and additive, covering role relevance, confirmed and
-missing requirements, seniority, location, work arrangement, employment eligibility and the bounded
-preferred-language signal. `evaluator.py` holds the exact weights, and `test_regressions.py` pins the
-behaviour that matters, such as a missing mandatory requirement costing far more than an optional
-one. An unmatched title is recorded as a potential gap.
+unverified requirements, seniority, location, work arrangement, employment eligibility and the
+bounded preferred-language signal. The numbers are independent of the exclusion triggers, so
+lowering a penalty - even to zero - never disables an exclusion, and they are part of the stored
+evaluation, so changing one requires `job-agent re-evaluate` to re-score stored jobs.
+`test_regressions.py`, `test_evaluation_config.py` and `test_unverified_requirements.py` pin the
+behaviour that matters, such as a confirmed skill outscoring an unverified requirement. An unmatched
+title is recorded as a potential gap.
 
 Confirmed design choices:
 
-- Exclusions are deliberately narrow: only the four mismatches above remove a job, and a missing
-  skill lowers the score instead of excluding one.
+- Exclusions are deliberately narrow: only the four mismatches above remove a job, and an unmet
+  requirement never excludes one.
 - Early-career wording (junior, entry, graduate, trainee, intern, associate) is recorded as a match
   but adds no score, so a junior or remote title cannot carry an otherwise irrelevant listing.
 - Ambiguity is never resolved in the job's favour: the evaluator and normalizer are written to stay
@@ -137,6 +149,22 @@ Confirmed design choices:
   for review instead of interpreting it.
 - `preferred_languages` is a secondary ranking signal only, as the comment in `evaluator.py` states:
   it never excludes a job and cannot outweigh role, seniority, location or eligibility.
+- The profile is the only source of candidate facts, and a fact it does not record never becomes a
+  mismatch: `profile.degree_level` is the highest level in `DEGREE_RANKS` (`bachelor`, `master`,
+  `phd`/`doctorate`, compared through `degree_meets`), so an unrecognized level leaves a degree
+  requirement as an uncertainty instead of a penalty or an exclusion. The same holds for
+  `Profile.has_professional_experience`: only a recorded `false` triggers the senior exclusion and
+  the years-of-experience penalty, recorded experience is a match without a duration claim, and an
+  unknown status leaves both as uncertainties.
+- `Requirement` carries only text, a kind and a category that is always `skill` today, so a skill
+  requirement cannot be told apart from any other requirement the profile does not list. Every such
+  requirement is therefore recorded as unverified (no `missing_requirement` penalty, no gap) and
+  left for manual review; those weights stay defined and validated for a future rule that can prove
+  a requirement unmet.
+- The geographic radius only applies when both sides resolve: `LocationResult` carries
+  `origin_resolved` and `job_location_resolved`, so `evaluate` names the configured origin when it
+  is the problem instead of blaming a job city that resolved, never awards the within-radius bonus
+  for an unestablished distance, and never excludes on distance it could not compute.
 
 ## Public sources and search orchestration
 
@@ -145,7 +173,8 @@ Confirmed design choices:
 Himalayas as the one adapter that does not accept a location filter. `collect` runs either one
 manual query against a single adapter (Adzuna unless `--source` says otherwise) or every configured
 query, all `primary` queries before all `secondary` ones, across the selected adapters, and
-de-duplicates results by `(source, external_job_id)` within the run.
+de-duplicates results by `(source, external_job_id)` within the run. Every configured query is sent
+to every selected adapter, so the request count of a configured search is queries x adapters.
 
 When Adzuna's credentials are absent, `default_sources` substitutes an `UnavailableSource`
 placeholder instead of failing, and `collect` records the skip in `SearchOutcome.skipped`, counts no
@@ -235,11 +264,15 @@ keeps the shipped `data/*.example.json` files loadable, which is what guards the
 copy.
 
 Read the test modules for the exact cases. By concern, they cover evaluation and location rules
-(`test_regressions.py`, `test_location.py`, `test_debugging.py`), persistence, CV truthfulness and
-maintenance (`test_agent.py`, `test_maintenance.py`), the CLI including UTF-8 output and closed-pipe
-handling (`test_cli_search.py`, `test_cli_output.py`), the dashboard read models and HTTP routes
-(`test_dashboard.py`), the source adapters (`test_sources.py`, `test_adzuna.py`) and the shipped
-examples (`test_examples.py`).
+(`test_regressions.py`, `test_evaluation_config.py`, `test_degree_requirements.py`,
+`test_experience_status.py`, `test_location.py`, `test_debugging.py`), persistence, CV truthfulness
+and maintenance (`test_agent.py`, `test_maintenance.py`), the CLI including UTF-8 output and
+closed-pipe handling (`test_cli_search.py`, `test_cli_output.py`), the dashboard read models and HTTP
+routes (`test_dashboard.py`), the source adapters (`test_sources.py`, `test_adzuna.py`) and the
+shipped examples (`test_examples.py`). `tests/evaluation_baseline.json`
+records the evaluation output of the implementation that predates the configurable weights;
+`tests/capture_evaluation_baseline.py` regenerates it and must be run *before* changing evaluation
+behaviour.
 
 Two environment caveats matter when reading results. The three CV-compilation tests skip when no
 `pdflatex` executable is on `PATH`, but a LaTeX installation that is present and cannot compile makes
@@ -261,10 +294,16 @@ test contacts a source.
   wording such as "required" or "must have" appears just before the term. Richer extraction from
   full descriptions is not implemented.
 - Language requirements are not scored; profile languages are used in CV drafts only.
+- The `missing_requirement` weights are validated but currently unused: no rule can yet prove that a
+  requirement the profile does not list is genuinely absent.
 - Salary is stored when a source publishes it but is not scored, and there is no salary filter.
   `locations` and `work_arrangements` are validated but unused for scoring, while the example
   configuration documents `maximum_commute_note` as informational only.
-- `profile.degree_level` is not used anywhere: the Master's check reads the requirement text.
+- Degree requirements are only detected as text: any requirement containing "master" takes the
+  degree branch, while other degree words (a mandatory Bachelor's, a PhD requirement) are not
+  compared with the profile yet.
+- CV drafts have no work-experience section, so recorded professional experience cannot appear in a
+  generated draft yet.
 - Himalayas salary fields are published but unread, and the BA API offers no canonical posting URL,
   so some listings keep an unknown `source_url`; the BA adapter fetches five listings per query.
 - The built-in fallback coordinate dictionary covers only a few cities; for other cities
@@ -277,6 +316,6 @@ test contacts a source.
 ## Documentation conventions
 
 Three documents describe the project, each with one job: `README.md` is the landing page,
-`USER_MANUAL.md` documents behaviour users can see, and this file documents the implementation.
-Behavioural detail belongs in the manual, implementation detail here, and the README stays short and
-links to both.
+`USER_MANUAL.md` is the user guide (installation, configuration, usage, scoring and troubleshooting),
+and this file documents the implementation. Behavioural detail belongs in the manual, implementation
+detail here, and the README stays short and links to both.
