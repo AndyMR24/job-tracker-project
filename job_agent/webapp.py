@@ -28,6 +28,7 @@ DEFAULT_CONFIG = ROOT / "data" / "search_config.json"
 DEFAULT_DB = ROOT / "data" / "job_agent.sqlite3"
 DEFAULT_OUTPUT = ROOT / "output"
 PAGE_SIZE = 25
+PAGE_SIZES = webui.PAGE_SIZES
 
 
 def timestamp() -> str:
@@ -228,14 +229,32 @@ class Dashboard:
         return self._page("Overview", "/", content, params)
 
     def _jobs(self, params: dict):
-        values = {"q": params.get("q", ""), "source": params.get("source", ""), "status": params.get("status", ""), "assessment": params.get("assessment", ""), "arrangement": params.get("arrangement", ""), "min_score": params.get("min_score", ""), "sort": params.get("sort", "score_desc"), "include_excluded": params.get("include_excluded", "0"), "include_rejected": params.get("include_rejected", "0")}
+        page_size = as_int(params.get("page_size"), PAGE_SIZE)
+        if page_size not in PAGE_SIZES:
+            page_size = PAGE_SIZE
+        values = {"q": params.get("q", ""), "source": [], "source_filter": params.get("source_filter", "0"), "status": params.get("status", ""), "assessment": params.get("assessment", ""), "arrangement": params.get("arrangement", ""), "min_score": params.get("min_score", ""), "sort": params.get("sort", "score_desc"), "page_size": str(page_size), "include_excluded": params.get("include_excluded", "0"), "include_rejected": params.get("include_rejected", "0"), "include_applied": params.get("include_applied", "0")}
+        raw_sources = params.get("source", [])
+        if isinstance(raw_sources, str):
+            raw_sources = [raw_sources] if raw_sources else []
+        selected_sources = [source for source in raw_sources if source]
         with self._store() as store:
             records = self._records(store)
-        filtered = dashboard.filter_jobs(records, text=values["q"], source=values["source"], status=values["status"], assessment=values["assessment"], arrangement=values["arrangement"], min_score=as_int(values["min_score"], 0), include_excluded=values["include_excluded"] == "1", include_rejected=values["include_rejected"] == "1", sort=values["sort"])
-        page_count = max(1, -(-len(filtered) // PAGE_SIZE))
+            application_statuses = {row["job_id"]: row["status"] for row in store.applications()}
+        available_sources = list(discovery.SOURCE_NAMES)
+        for name in dashboard.source_names(records) + selected_sources:
+            if name not in available_sources:
+                available_sources.append(name)
+        if not selected_sources and values["source_filter"] != "1":
+            selected_sources = list(available_sources)
+        values["source"] = selected_sources
+        for record in records:
+            record["has_application"] = record["id"] in application_statuses
+            record["application_status"] = application_statuses.get(record["id"])
+        filtered = dashboard.filter_jobs(records, text=values["q"], source=selected_sources, status=values["status"], assessment=values["assessment"], arrangement=values["arrangement"], min_score=as_int(values["min_score"], 0), include_excluded=values["include_excluded"] == "1", include_rejected=values["include_rejected"] == "1", include_applied=values["include_applied"] == "1", sort=values["sort"])
+        page_count = max(1, -(-len(filtered) // page_size))
         page_number = min(max(1, as_int(params.get("page"), 1)), page_count)
-        window = filtered[(page_number - 1) * PAGE_SIZE: page_number * PAGE_SIZE]
-        content = webui.jobs_page(window, values, dashboard.source_names(records), dashboard.STATUS_ORDER, page_number, page_count, len(filtered))
+        window = filtered[(page_number - 1) * page_size: page_number * page_size]
+        content = webui.jobs_page(window, values, available_sources, dashboard.STATUS_ORDER, page_number, page_count, len(filtered))
         return self._page("Jobs", "/jobs", content, params)
 
     def _job_detail(self, job_id: int, params: dict):
@@ -297,25 +316,36 @@ class Dashboard:
     def _start_search(self, form: dict):
         mode = (form.get("mode") or "query").strip()
         query = (form.get("query") or "").strip() or None
-        source = (form.get("source") or "").strip() or None
         location = (form.get("location") or "").strip() or None
+        raw_sources = form.get("source", [])
+        if isinstance(raw_sources, str):
+            raw_sources = [raw_sources] if raw_sources else []
+        selected_sources = [source.strip() for source in raw_sources if isinstance(source, str) and source.strip()]
+        if not selected_sources:
+            if (form.get("source_filter") or "").strip() == "1":
+                raise ValueError("Select at least one source.")
+            selected_sources = ["adzuna"] if mode == "query" else list(discovery.SOURCE_NAMES)
+        unknown = sorted(set(selected_sources) - set(discovery.SOURCE_NAMES))
+        if unknown:
+            raise ValueError("Unknown source(s): %s" % ", ".join(unknown))
         if mode == "configured":
             query = None
         elif not query:
             raise ValueError("Enter a query to search for.")
-        if source is not None and source not in discovery.SOURCE_NAMES:
-            source = None
-        started, message = self.search.start(mode=mode, query=query, source=source, location=location)
+        started, message = self.search.start(mode=mode, query=query, source=selected_sources, location=location)
         return self._redirect("/search", notice=message) if started else self._redirect("/search", error=message)
 
     def _decide(self, job_id: int, form: dict):
         action = (form.get("action") or "").strip()
-        if action not in {"save", "reject"}:
+        if action not in {"save", "reject", "unsave"}:
             raise ValueError("Unknown decision: %s" % action)
         reason = (form.get("reason") or "").strip() or None
         with self._store() as store:
-            store.set_decision(job_id, action, reason)
-        outcome = "saved" if action == "save" else "rejected"
+            if action == "unsave":
+                store.remove_from_shortlist(job_id)
+            else:
+                store.set_decision(job_id, action, reason)
+        outcome = {"save": "saved", "reject": "rejected", "unsave": "removed from shortlist"}[action]
         return self._redirect(self._safe_next(form.get("next"), "/jobs/%s" % job_id), notice="Job %s %s." % (job_id, outcome))
 
     def _application(self, job_id: int, form: dict, *, redirect_to: str):
@@ -357,12 +387,18 @@ class RequestHandler(BaseHTTPRequestHandler):
 
     def _dispatch(self, method: str):
         parsed = urllib.parse.urlsplit(self.path)
-        params = {key: values[-1] for key, values in urllib.parse.parse_qs(parsed.query, keep_blank_values=True).items()}
+        parsed_params = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+        params = {key: values[-1] for key, values in parsed_params.items()}
+        if "source" in parsed_params:
+            params["source"] = parsed_params["source"]
         form: dict[str, str] = {}
         if method == "POST":
             length = as_int(self.headers.get("Content-Length"), 0)
             body = self.rfile.read(length).decode("utf-8", "replace") if length > 0 else ""
-            form = {key: values[-1] for key, values in urllib.parse.parse_qs(body, keep_blank_values=True).items()}
+            parsed_form = urllib.parse.parse_qs(body, keep_blank_values=True)
+            form = {key: values[-1] for key, values in parsed_form.items()}
+            if "source" in parsed_form:
+                form["source"] = parsed_form["source"]
             if not self._same_origin():
                 payload = webui.error_page(403, "Cross-origin form submissions are rejected.", str(self.server.dashboard.database_path)).encode("utf-8")
                 self._send(403, {"Content-Type": "text/html; charset=utf-8"}, payload)

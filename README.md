@@ -132,9 +132,10 @@ job-agent dashboard            # or: python -m job_agent.webapp
 ```
 
 Then open http://127.0.0.1:8770/. The dashboard offers an overview, job browsing with filters and
-sorting, job detail with the full evaluation and the original posting link, save/reject actions,
-saved jobs, application tracking, search history, source statistics, background searches and CV
-generation with PDF download.
+sorting (tracked applications are hidden from the default list), job detail with the full evaluation
+and the original posting link, save/remove-from-shortlist and reject actions, saved jobs,
+application tracking, search history, source statistics, background searches and CV generation with
+PDF download.
 
 It binds to `127.0.0.1` by default, has no authentication and rejects cross-origin form posts as
 CSRF hardening rather than access control, so keep it local. Widen the binding with `--host` only if

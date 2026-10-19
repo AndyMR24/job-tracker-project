@@ -5,6 +5,7 @@ import json
 
 STATUS_ORDER = ("discovered", "saved", "applied", "interview", "offer", "rejected_by_company", "withdrawn", "rejected_by_user")
 STATUS_LABELS = {"discovered": "Discovered", "saved": "Saved", "rejected_by_user": "Rejected by user", "applied": "Applied", "interview": "Interview", "offer": "Offer", "rejected_by_company": "Rejected by company", "withdrawn": "Withdrawn"}
+JOB_DECISION_STATUSES = ("discovered", "saved", "rejected_by_user")
 APPLICATION_STATUSES = ("applied", "interview", "offer", "rejected_by_company", "withdrawn")
 BANDS = ("recommended", "borderline", "excluded")
 BAND_LABELS = {"recommended": "Recommended", "borderline": "Borderline", "excluded": "Excluded"}
@@ -41,16 +42,29 @@ def sort_jobs(records: list[dict], sort: str) -> list[dict]:
     return sorted(records, key=lambda r: ((r["score"] if r["score"] is not None else -1), r["last_seen_at"] or ""), reverse=True)
 
 
-def filter_jobs(records: list[dict], *, text: str = "", source: str = "", status: str = "", assessment: str = "", arrangement: str = "", min_score: int = 0, include_excluded: bool = False, include_rejected: bool = False, sort: str = "score_desc") -> list[dict]:
+def filter_jobs(records: list[dict], *, text: str = "", source: str | list[str] | tuple[str, ...] | None = "", status: str = "", assessment: str = "", arrangement: str = "", min_score: int = 0, include_excluded: bool = False, include_rejected: bool = False, include_applied: bool = False, sort: str = "score_desc") -> list[dict]:
     """Filter and order job records; every criterion is optional and purely presentational.
 
-    Evaluator-excluded jobs and jobs the user rejected are hidden unless the caller asks for them,
-    either through the include flags or by selecting that fit band or status explicitly.
+    Evaluator-excluded jobs, jobs the user rejected and jobs with a tracked application are hidden
+    unless the caller asks for them. Selecting a recognized status is an explicit query and overrides
+    those default hides. Job-decision statuses match `jobs.status`; application statuses match the
+    application record prepared by the caller. Unknown status values retain the old job-status match.
     """
-    if status == "rejected_by_user":
+    if status in JOB_DECISION_STATUSES or status in APPLICATION_STATUSES:
+        include_excluded = True
         include_rejected = True
+        include_applied = True
     if assessment == "excluded":
         include_excluded = True
+    if isinstance(source, str):
+        selected_sources = {source} if source else set()
+        filter_sources = bool(source)
+    elif source is None:
+        selected_sources = set()
+        filter_sources = False
+    else:
+        selected_sources = {str(item) for item in source if item}
+        filter_sources = True
     needle = (text or "").strip().lower()
     selected = []
     for record in records:
@@ -58,12 +72,18 @@ def filter_jobs(records: list[dict], *, text: str = "", source: str = "", status
             continue
         if record["status"] == "rejected_by_user" and not include_rejected:
             continue
+        if record.get("has_application", False) and not include_applied:
+            continue
         if needle and not any(needle in (record[field] or "").lower() for field in ("title", "company", "location")):
             continue
-        if source and record["source"] != source:
+        if filter_sources and record["source"] not in selected_sources:
             continue
-        if status and record["status"] != status:
-            continue
+        if status:
+            if status in APPLICATION_STATUSES:
+                if record.get("application_status") != status:
+                    continue
+            elif record["status"] != status:
+                continue
         if assessment and band(record) != assessment:
             continue
         if arrangement and record["arrangement"] != arrangement:

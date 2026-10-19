@@ -3,12 +3,16 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import urllib.parse
 import urllib.request
 
 
 class BAError(RuntimeError):
     pass
+
+
+_APPLICATION_LINK = re.compile(r"Bewerbungsformular\s*:\s*\[[^\]]+\]\(\s*(https?://[^)\s]+)\s*\)", re.IGNORECASE)
 
 
 class BASource:
@@ -54,10 +58,18 @@ def _map(item: dict, detail: dict) -> dict:
     title = detail.get("stellenangebotsTitel") or item.get("stellenangebotsTitel")
     description = detail.get("stellenangebotsBeschreibung") or detail.get("stellenbeschreibung")
     ref = item.get("referenznummer") or item.get("refnr") or detail.get("referenznummer")
-    # The Jobsuche search response exposes the employer application link as `externeURL` (capital URL)
-    # and only for some listings; it is absent from the detail payload. A missing value stays unknown
-    # because the API provides no canonical arbeitsagentur.de posting URL to fall back on.
+    # The Jobsuche search and detail responses may expose the employer application link as
+    # `externeURL` (capital URL). When neither response provides one, a clearly labelled
+    # `Bewerbungsformular` Markdown link is the only conservative fallback. `allianzpartnerUrl` is
+    # a partner/employer domain, not a vacancy URL, so it is deliberately not used.
     external_url = item.get("externeURL") or detail.get("externeURL") or item.get("externeUrl") or detail.get("externeUrl")
+    if not external_url:
+        match = _APPLICATION_LINK.search(description or "")
+        if match:
+            candidate = match.group(1)
+            parsed = urllib.parse.urlsplit(candidate)
+            if parsed.scheme in {"http", "https"} and parsed.netloc:
+                external_url = candidate
     return {"title": title, "company": item.get("firma") or detail.get("arbeitgeber"), "location": location, "description": description, "employment_type": detail.get("angebotsart") or item.get("angebotsart"), "arrangement": "unknown", "source": "ba", "source_url": external_url, "external_job_id": str(ref) if ref else None, "metadata": {"homeoffice_possible": item.get("homeofficemoeglich"), "homeoffice_type": item.get("homeofficetyp"), "homeoffice_percent": item.get("homeofficeprozent"), "published_at": item.get("datumErsteVeroeffentlichung"), "modified_at": item.get("aenderungsdatum"), "distance": item.get("entfernung"), "beruf": item.get("hauptberuf"), "alternative_jobs": [item.get("alternativBeruf1"), item.get("alternativBeruf2")], "all_jobs": item.get("alleBerufe")}}
 
 

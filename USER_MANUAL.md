@@ -305,11 +305,16 @@ the CLI immediately, and the other way round. The CLI remains the reference inte
 
 - **Overview** - counts by fit band and status, newest discoveries, the saved shortlist, tracked
   applications and a source summary.
-- **Jobs** - the full local job list with text search, source, status, fit band, arrangement, minimum
-  score, sorting and paging.
-- **Saved** - the shortlist with inline save and reject buttons.
-- **Applications** - every tracked application with status, application date and notes.
-- **Search** - run one ad-hoc query, or run the full configured search, with live progress.
+- **Jobs** - the local job list with text search, source, status, fit band, arrangement, minimum
+  score, sorting, a per-page selector and paging. Jobs with a tracked application are hidden by
+  default; set the "Tracked applications" filter to "show" to inspect them.
+- **Saved** - the shortlist based on the job's saved decision state, including saved jobs that also
+  have an application record, with inline remove-from-shortlist and reject buttons.
+- **Applications** - every tracked application regardless of the job's current decision status,
+  with application status, application date and notes.
+- **Search** - run one ad-hoc query against one or more selected sources, or run the full configured
+  search, with live progress. Quick search defaults to Adzuna; configured search defaults to all
+  sources. An empty source selection is rejected.
 - **History** - logged searches and the local audit trail.
 - **Sources** - per-source job counts, average score, fit distribution, saved and applied counts,
   newest listing and top titles, plus the configured queries and location preferences.
@@ -318,17 +323,35 @@ the CLI immediately, and the other way round. The CLI remains the reference inte
 
 The Jobs page offers text search plus filters for source, status, fit band, arrangement and a minimum
 score, and can sort by score, discovery date, title, company, source or status. Jobs the evaluator
-excluded and jobs you rejected are hidden by default; set the matching filter to "show" to inspect
-them. They stay stored either way, so history and auditing are unaffected. Long lists are paged.
+excluded, jobs you rejected and jobs with a tracked application are hidden by default; set the
+matching filter to "show" to inspect them. Filter choices are kept when you change page or sort
+order. They stay stored either way, so history and auditing are unaffected. Long lists are paged.
+
+The source filter is a compact **Sources** picker; open it to see the known sources as checkboxes.
+All sources are selected initially. Select one or more sources to show jobs from any of them, or use
+the "select all" and "clear" links. If you clear every source and apply the filter, no jobs are
+shown; an empty selection is not treated as "all sources". The source selection is kept with the
+other filters when you change page or sort order.
+
+The **Per page** selector offers 10, 25, 50 and 100 jobs, with 25 as the default. The selected size
+is kept when you change page, sort order or other filters.
+
+The Status filter reads two separate records. `discovered`, `saved` and `rejected_by_user` come from
+the job record. `applied`, `interview`, `offer`, `rejected_by_company` and `withdrawn` come from the
+tracked application record, so an application remains findable even if a later Save or Reject action
+changes the job's own status. Selecting any of these recognized statuses is an explicit query: it
+overrides the three default hides above, while the other filters still apply. The "Tracked
+applications" hide/show control applies to the default Jobs view when no status is selected.
 
 ### Job details and evaluation history
 
 The job detail page shows the listing facts (including a link to the original posting), the complete
 fit evaluation (score, strong matches, potential gaps, important concerns, uncertainties), the
-extracted requirements, description text, the per-job history, and the actions: save, reject with an
-optional reason, generate a tailored CV, and record an application status. The requirements table
-shows each requirement, how firmly the listing states it (Stated as: mandatory, preferred, useful or
-unknown, taken from the listing rather than from your profile) and the recorded requirement area.
+extracted requirements, description text, the per-job history, and the actions: save to or remove
+from the shortlist, reject with an optional reason, generate a tailored CV, and record an application
+status. The requirements table shows each requirement, how firmly the listing states it (Stated as:
+mandatory, preferred, useful or unknown, taken from the listing rather than from your profile) and
+the recorded requirement area.
 
 Dates and times are shown as `DD-MM-YYYY, HH:MM` (for example `15-10-2026, 14:02`). They are the
 values stored in the local database, which the application records in UTC, and are displayed without
@@ -336,10 +359,14 @@ any timezone conversion.
 
 ### Saving and rejecting jobs
 
-Use the buttons on the job detail page or the inline actions in the job list, or the CLI equivalents
+Use the buttons on the job detail page or the inline actions on the Saved page, or the CLI equivalents
 `job-agent save JOB_ID` and `job-agent reject JOB_ID --reason "too far"`. Rejected jobs remain in the
-database and in the audit history. The valid application states are described in
-[Application tracking](#application-tracking).
+database and in the audit history. "Save to shortlist" records a shortlist decision only; it does not
+mean that you applied. A saved job shows **Remove from shortlist** instead of Save. Removing it never
+deletes the job, application records, CV drafts, or audit history: it restores the existing
+application status when one is tracked, or returns the job to `discovered`. The valid application
+states are described in [Application tracking](#application-tracking). Remove from shortlist is a
+dashboard action; the CLI currently exposes `save` and `reject` only.
 
 ### Application tracking
 
@@ -347,7 +374,17 @@ The tool records what you did; it never applies for you. Track progress with
 `job-agent application JOB_ID applied --date 2026-09-15 --notes "Submitted manually"`, or use the
 forms on the Applications page, then review them with `job-agent applications`. Valid tracked states
 are `applied`, `interview`, `offer`, `rejected_by_company`, and `withdrawn`; `rejected_by_company`
-records the employer's decision and is distinct from your own `reject` decision.
+records the employer's decision and is distinct from your own `reject` decision. Once any of these
+states is recorded, the job leaves the default Jobs view but remains available on the Applications
+page and under the Jobs page's "Tracked applications" filter. Recording an application also mirrors
+that status into the job's current status under the current model, so a job that was on the
+shortlist leaves Saved. It remains in Applications regardless of later Save or Reject actions:
+Saved is the shortlist decision, while Applications is the tracked application record.
+
+When you record an application with status `applied` and leave the date empty, the local calendar
+date is stored. An explicitly supplied date is used as entered, and later status changes without a
+date keep the existing application date. Recording an application directly in another status without
+a date leaves the date empty.
 
 ### Generating job-specific CVs
 
@@ -380,6 +417,9 @@ come **before** the subcommand, for example
 | `job-agent re-evaluate` | Refresh stored evaluations after changing profile or rules. |
 | `job-agent permission-check ACTION DESTINATION DATA --approve` | Record a one-time local approval for a future external action; it never transmits data and always refuses the `submit_application` action. |
 | `job-agent dashboard` | Serve the local web interface. |
+
+When `job-agent application ... applied` omits `--date`, today's local date is stored. Explicit and
+previously stored application dates are preserved when later updates omit the date.
 
 Use `job-agent history` to see local audit events, and `job-agent list` followed by
 `job-agent view JOB_ID` for the CLI equivalent of the dashboard pages. Commands can also be run as
@@ -591,12 +631,23 @@ rather than adding more primary queries.
 - Limiting a run: `--source adzuna`, `--source nomado24`, `--source himalayas` or `--source ba`
   restricts a search to one source. A manual query (`--query`) bypasses the configured list and
   performs exactly one request, against Adzuna by default or the source given with `--source`.
+- Dashboard source selection: Quick search defaults to Adzuna and Full configured search defaults to
+  all sources. The Search tab accepts any non-empty selection of the four sources; a cleared
+  selection is rejected. This selection is for that search run only and does not rewrite
+  `search_config.json`. It is separate from the Jobs tab source filter, which only filters jobs
+  already stored.
 - Duplicates: a listing returned more than once by the same source is processed once when its source
   and external identifier match; there is no fuzzy title or company matching. Normalized jobs keep
   their source for diagnostics.
 - Detail levels differ between sources: Adzuna commonly returns snippets, while BA may request a
   small number of details after the search results. Review listings before treating them as complete
   job descriptions.
+- BA links: the app uses an explicit `externeURL` from either the search or detail response. If
+  neither supplies one, it promotes only a clearly labelled `Bewerbungsformular` Markdown link from
+  the description when that link is `http` or `https`. It does not use generic partner/employer
+  domains or arbitrary description links, and it does not construct a BA listing URL. If no direct
+  vacancy link exists, the job detail page says so. Descriptions containing arbitrary links are
+  otherwise shown as plain text.
 - Errors: a CLI search stops with an error if a source fails, while a dashboard search continues
   through the remaining sources and reports the failures per source. Missing Adzuna credentials are
   a skip rather than a failure (see [Missing API credentials](#missing-api-credentials)).

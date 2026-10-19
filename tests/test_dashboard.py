@@ -9,6 +9,7 @@ import unittest
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
@@ -106,7 +107,7 @@ class DashboardFixture(unittest.TestCase):
             error.close()
 
     def post(self, path, data, headers=None):
-        request = urllib.request.Request(self.base + path, data=urllib.parse.urlencode(data).encode("utf-8"), method="POST", headers=headers or {})
+        request = urllib.request.Request(self.base + path, data=urllib.parse.urlencode(data, doseq=True).encode("utf-8"), method="POST", headers=headers or {})
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
                 return response.status, response.geturl(), response.read().decode("utf-8")
@@ -115,6 +116,15 @@ class DashboardFixture(unittest.TestCase):
                 return exc.code, exc.geturl(), exc.read().decode("utf-8")
             finally:
                 exc.close()
+
+    def wait_for_search(self):
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            state = self.server.dashboard.search.snapshot()
+            if not state["running"]:
+                return state
+            time.sleep(0.2)
+        self.fail("search did not finish")
 
 
 class ReadModelTests(DashboardFixture):
@@ -143,6 +153,43 @@ class ReadModelTests(DashboardFixture):
         self.assertEqual([record["title"] for record in dashboard.filter_jobs(records, min_score=70)], ["Junior Data Analyst"])
         self.assertEqual([record["title"] for record in dashboard.filter_jobs(records, arrangement="remote")], ["Python Developer", "Werkstudent Data Science"])
         self.assertEqual([record["title"] for record in dashboard.filter_jobs(records, assessment="excluded")], ["Senior Data Platform Engineer"])
+
+    def test_filter_jobs_hides_tracked_applications_by_default(self):
+        records = self.records()
+        applied = next(record for record in records if record["title"] == "Python Developer")
+        applied["has_application"] = True
+        applied["application_status"] = "applied"
+        applied["status"] = "applied"
+        self.assertNotIn("Python Developer", [record["title"] for record in dashboard.filter_jobs(records)])
+        self.assertIn("Python Developer", [record["title"] for record in dashboard.filter_jobs(records, include_applied=True)])
+        self.assertIn("Python Developer", [record["title"] for record in dashboard.filter_jobs(records, status="applied")])
+
+    def test_pager_preserves_application_filters(self):
+        link = webui.pager("/jobs", {"q": "python", "source": ["adzuna", "himalayas"], "source_filter": "1", "status": "interview", "sort": "newest", "page_size": "10", "include_applied": "1"}, 1, 2, 30)
+        self.assertIn("q=python", link)
+        self.assertIn("source=adzuna", link)
+        self.assertIn("source=himalayas", link)
+        self.assertIn("source_filter=1", link)
+        self.assertIn("status=interview", link)
+        self.assertIn("sort=newest", link)
+        self.assertIn("page_size=10", link)
+        self.assertIn("include_applied=1", link)
+
+    def test_filter_jobs_accepts_multiple_sources_and_empty_selection(self):
+        records = self.records()
+        titles = [record["title"] for record in dashboard.filter_jobs(records, source=["adzuna", "himalayas"])]
+        self.assertIn("Junior Data Analyst", titles)
+        self.assertIn("Office Manager", titles)
+        self.assertIn("Python Developer", titles)
+        self.assertNotIn("Werkstudent Data Science", titles)
+        self.assertEqual(dashboard.filter_jobs(records, source=[]), [])
+
+    def test_unrecognized_status_keeps_job_status_matching(self):
+        records = self.records()
+        record = next(item for item in records if item["title"] == "Junior Data Analyst")
+        record["status"] = "legacy-custom"
+        titles = [item["title"] for item in dashboard.filter_jobs(records, status="legacy-custom")]
+        self.assertEqual(titles, ["Junior Data Analyst"])
 
     def test_sorting_orders_by_score_and_discovery_date(self):
         records = self.records()
@@ -187,6 +234,73 @@ class HttpTests(DashboardFixture):
         self.assertNotIn("Office Manager", high_scores)
         self.assertIn("Junior Data Analyst", high_scores)
 
+    def test_jobs_page_supports_multiple_sources_and_an_empty_selection(self):
+        _, initial = self.get("/jobs")
+        self.assertIn('<details class="source-filter"', initial)
+        self.assertIn('<div class="source-panel">', initial)
+        self.assertIn("Sources: all (4)", initial)
+        self.assertIn("filter-group-footer", initial)
+        self.assertIn("filter-group-actions", initial)
+        self.assertIn('name="source_filter" value="1"', initial)
+        self.assertIn(">select all</a>", initial)
+        self.assertIn(">clear</a>", initial)
+        for source in discovery.SOURCE_NAMES:
+            self.assertIn('name="source" value="%s" checked' % source, initial)
+
+        _, multi = self.get("/jobs?source=adzuna&source=himalayas&source_filter=1")
+        self.assertIn("Junior Data Analyst", multi)
+        self.assertIn("Office Manager", multi)
+        self.assertIn("Python Developer", multi)
+        self.assertNotIn("Werkstudent Data Science", multi)
+        self.assertIn("Sources: adzuna, himalayas", multi)
+
+        _, all_sources = self.get("/jobs?source=adzuna&source=nomado24&source=himalayas&source=ba&source_filter=1")
+        for fixture in FIXTURES:
+            if fixture["title"] != "Senior Data Platform Engineer":
+                self.assertIn(fixture["title"], all_sources)
+
+        _, cleared = self.get("/jobs?source_filter=1")
+        self.assertIn("0 matching", cleared)
+        self.assertIn("Sources: none", cleared)
+        for fixture in FIXTURES:
+            self.assertNotIn(fixture["title"], cleared)
+
+        _, ba_only = self.get("/jobs?source=ba&source_filter=1")
+        self.assertIn('name="source" value="ba"', ba_only)
+        self.assertIn("Sources: ba", ba_only)
+        self.assertIn("0 matching", ba_only)
+
+    def test_source_filter_combines_with_saved_status_and_sorting(self):
+        adzuna_id = self.ids["Junior Data Analyst"]
+        himalayas_id = self.ids["Python Developer"]
+        self.post("/jobs/%s/decision" % adzuna_id, {"action": "save", "next": "/jobs"})
+        self.post("/jobs/%s/decision" % himalayas_id, {"action": "save", "next": "/jobs"})
+        _, saved = self.get("/jobs?source=adzuna&source=himalayas&source_filter=1&status=saved")
+        self.assertIn("Junior Data Analyst", saved)
+        self.assertIn("Python Developer", saved)
+        self.assertNotIn("Werkstudent Data Science", saved)
+        _, newest = self.get("/jobs?source=adzuna&source=himalayas&source_filter=1&sort=newest")
+        self.assertIn("Junior Data Analyst", newest)
+        self.assertIn("Python Developer", newest)
+        self.assertNotIn("Werkstudent Data Science", newest)
+
+    def test_jobs_page_size_options_boundaries_and_invalid_values(self):
+        store = self.store()
+        for index in range(30):
+            job = normalize({"title": "Bulk Job %02d" % index, "source": "adzuna", "external_job_id": "bulk-%s" % index})
+            store.save_job(job, {"score": 50, "assessment": "borderline", "excluded": False})
+        _, ten = self.get("/jobs?page_size=10")
+        self.assertIn('<option value="10" selected>10</option>', ten)
+        self.assertIn("page 1 of 4", ten)
+        _, fifty = self.get("/jobs?page_size=50")
+        self.assertIn('<option value="50" selected>50</option>', fifty)
+        self.assertIn("page 1 of 1", fifty)
+        _, invalid = self.get("/jobs?page_size=invalid")
+        self.assertIn('<option value="25" selected>25</option>', invalid)
+        self.assertIn("page 1 of 2", invalid)
+        _, last = self.get("/jobs?page_size=10&page=4")
+        self.assertIn("page 4 of 4", last)
+
     def test_job_detail_shows_evaluation_source_link_and_requirements(self):
         job_id = self.ids["Junior Data Analyst"]
         status, body = self.get("/jobs/%s" % job_id)
@@ -199,6 +313,18 @@ class HttpTests(DashboardFixture):
         self.assertIn("<th>Requirement</th>", body)
         self.assertIn("Python", body)
         self.assertIn("Generate tailored CV", body)
+
+    def test_ba_job_without_a_url_shows_a_specific_missing_link_message(self):
+        job = normalize({"title": "BA Job Without Link", "source": "ba", "external_job_id": "ba-no-link"})
+        job_id, _ = self.store().save_job(job, evaluate(job, self.profile, self.config).to_dict())
+        _, body = self.get("/jobs/%s" % job_id)
+        self.assertIn("No direct vacancy link provided by BA.", body)
+
+        other = normalize({"title": "Other Job Without Link", "source": "adzuna", "external_job_id": "other-no-link"})
+        other_id, _ = self.store().save_job(other, evaluate(other, self.profile, self.config).to_dict())
+        _, other_body = self.get("/jobs/%s" % other_id)
+        self.assertNotIn("No direct vacancy link provided by BA.", other_body)
+        self.assertIn("&ndash;", other_body)
 
     def test_job_detail_shows_the_internal_database_id(self):
         job_id = self.ids["Python Developer"]
@@ -249,6 +375,187 @@ class HttpTests(DashboardFixture):
         rows = {row["job_id"]: row["status"] for row in self.store().applications()}
         self.assertEqual(rows[other], "interview")
 
+    def test_application_date_defaults_for_applied_and_is_preserved(self):
+        job_id = self.ids["Werkstudent Data Science"]
+        today = date.today().isoformat()
+        self.post("/jobs/%s/application" % job_id, {"status": "applied"})
+        row = next(item for item in self.store().applications() if item["job_id"] == job_id)
+        self.assertEqual(row["application_date"], today)
+        self.post("/jobs/%s/application" % job_id, {"status": "interview"})
+        row = next(item for item in self.store().applications() if item["job_id"] == job_id)
+        self.assertEqual(row["application_date"], today)
+        self.post("/jobs/%s/application" % job_id, {"status": "offer", "date": "2026-02-03"})
+        row = next(item for item in self.store().applications() if item["job_id"] == job_id)
+        self.assertEqual(row["application_date"], "2026-02-03")
+        self.post("/jobs/%s/application" % job_id, {"status": "withdrawn"})
+        row = next(item for item in self.store().applications() if item["job_id"] == job_id)
+        self.assertEqual(row["application_date"], "2026-02-03")
+
+        other_id = self.ids["Office Manager"]
+        self.post("/jobs/%s/application" % other_id, {"status": "interview"})
+        row = next(item for item in self.store().applications() if item["job_id"] == other_id)
+        self.assertIsNone(row["application_date"])
+
+    def test_saved_view_and_detail_offer_the_appropriate_shortlist_action(self):
+        job_id = self.ids["Junior Data Analyst"]
+        _, before = self.get("/jobs/%s" % job_id)
+        self.assertIn("Save to shortlist", before)
+        self.assertNotIn("Remove from shortlist", before)
+        self.post("/jobs/%s/decision" % job_id, {"action": "save", "next": "/saved"})
+        _, saved = self.get("/saved")
+        self.assertIn("Remove from shortlist", saved)
+        self.assertNotIn("Save to shortlist", saved)
+        _, detail = self.get("/jobs/%s" % job_id)
+        self.assertIn("Remove from shortlist", detail)
+        self.assertNotIn("Save to shortlist", detail)
+        self.assertIn("Reject reason (optional)", detail)
+        self.assertIn('name="reason"', detail)
+
+    def test_remove_from_shortlist_returns_job_to_jobs(self):
+        job_id = self.ids["Junior Data Analyst"]
+        self.post("/jobs/%s/decision" % job_id, {"action": "save", "next": "/saved"})
+        status, url, body = self.post("/jobs/%s/decision" % job_id, {"action": "unsave", "next": "/saved"})
+        self.assertEqual(status, 200)
+        self.assertIn("removed from shortlist", url + body)
+        row = self.store().connection.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()
+        self.assertEqual(row["status"], "discovered")
+        _, saved = self.get("/saved")
+        self.assertNotIn("Junior Data Analyst", saved)
+        _, jobs = self.get("/jobs")
+        self.assertIn("Junior Data Analyst", jobs)
+        self.assertIn("job_removed_from_shortlist", [item["event"] for item in self.store().history()])
+
+    def test_remove_from_shortlist_restores_application_status(self):
+        job_id = self.ids["Python Developer"]
+        self.post("/jobs/%s/application" % job_id, {"status": "applied", "date": "2026-09-20", "notes": "sent by email"})
+        self.post("/jobs/%s/decision" % job_id, {"action": "save", "next": "/saved"})
+        self.post("/jobs/%s/decision" % job_id, {"action": "unsave", "next": "/saved"})
+        row = self.store().connection.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()
+        self.assertEqual(row["status"], "applied")
+        application = next(item for item in self.store().applications() if item["job_id"] == job_id)
+        self.assertEqual((application["status"], application["application_date"], application["notes"]), ("applied", "2026-09-20", "sent by email"))
+        _, saved = self.get("/saved")
+        self.assertNotIn("Python Developer", saved)
+        _, applications = self.get("/applications")
+        self.assertIn("Python Developer", applications)
+        _, default_body = self.get("/jobs")
+        self.assertNotIn("Python Developer", default_body)
+        _, applied = self.get("/jobs?status=applied")
+        self.assertIn("Python Developer", applied)
+
+    def test_unsave_rejects_a_job_that_is_not_on_the_shortlist(self):
+        job_id = self.ids["Office Manager"]
+        code, _, body = self.post("/jobs/%s/decision" % job_id, {"action": "unsave"})
+        self.assertEqual(code, 400)
+        self.assertIn("not on the shortlist", body)
+        status = self.store().connection.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()["status"]
+        self.assertEqual(status, "discovered")
+
+    def test_default_jobs_view_hides_tracked_applications(self):
+        applied_id = self.ids["Python Developer"]
+        saved_id = self.ids["Junior Data Analyst"]
+        self.post("/jobs/%s/application" % applied_id, {"status": "applied"})
+        self.post("/jobs/%s/decision" % saved_id, {"action": "save", "next": "/jobs"})
+
+        _, default_body = self.get("/jobs")
+        self.assertIn('name="include_applied"', default_body)
+        self.assertNotIn("Python Developer", default_body)
+        self.assertIn("Junior Data Analyst", default_body)
+
+        _, applications = self.get("/applications")
+        self.assertIn("Python Developer", applications)
+        self.assertIn("Applied", applications)
+
+        _, applied_filter = self.get("/jobs?status=applied")
+        self.assertIn("Python Developer", applied_filter)
+        _, shown = self.get("/jobs?include_applied=1")
+        self.assertIn("Python Developer", shown)
+        applied_select = shown.split('name="include_applied"', 1)[1].split("</select>", 1)[0]
+        self.assertIn('<option value="1" selected>show</option>', applied_select)
+        _, saved = self.get("/saved")
+        self.assertIn("Junior Data Analyst", saved)
+
+    def test_closed_application_statuses_remain_tracked_and_hidden_from_jobs(self):
+        withdrawn_id = self.ids["Python Developer"]
+        rejected_id = self.ids["Werkstudent Data Science"]
+        self.post("/jobs/%s/application" % withdrawn_id, {"status": "applied"})
+        self.post("/jobs/%s/application" % withdrawn_id, {"status": "withdrawn"})
+        self.post("/jobs/%s/application" % rejected_id, {"status": "rejected_by_company"})
+
+        rows = [row for row in self.store().applications() if row["job_id"] == withdrawn_id]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["status"], "withdrawn")
+
+        _, default_body = self.get("/jobs")
+        self.assertNotIn("Python Developer", default_body)
+        self.assertNotIn("Werkstudent Data Science", default_body)
+        _, applications = self.get("/applications")
+        self.assertIn("Withdrawn", applications)
+        self.assertIn("Rejected by company", applications)
+        _, shown = self.get("/jobs?include_applied=1")
+        self.assertIn("Python Developer", shown)
+        self.assertIn("Werkstudent Data Science", shown)
+        self.assertEqual(self.store().connection.execute("SELECT COUNT(*) FROM jobs").fetchone()[0], len(FIXTURES))
+
+    def test_applied_job_stays_hidden_after_save_changes_job_status(self):
+        job_id = self.ids["Python Developer"]
+        self.post("/jobs/%s/application" % job_id, {"status": "applied"})
+        self.post("/jobs/%s/decision" % job_id, {"action": "save", "next": "/jobs"})
+        status = self.store().connection.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()["status"]
+        self.assertEqual(status, "saved")
+        _, default_body = self.get("/jobs")
+        self.assertNotIn("Python Developer", default_body)
+        _, applications = self.get("/applications")
+        self.assertIn("Python Developer", applications)
+        _, applied_filter = self.get("/jobs?status=applied")
+        self.assertIn("Python Developer", applied_filter)
+        _, saved_filter = self.get("/jobs?status=saved")
+        self.assertIn("Python Developer", saved_filter)
+        _, shown = self.get("/jobs?include_applied=1")
+        self.assertIn("Python Developer", shown)
+
+    def test_application_status_filters_use_application_record(self):
+        job_id = self.ids["Python Developer"]
+        for application_status in dashboard.APPLICATION_STATUSES:
+            with self.subTest(status=application_status):
+                self.post("/jobs/%s/application" % job_id, {"status": application_status})
+                self.post("/jobs/%s/decision" % job_id, {"action": "save", "next": "/jobs"})
+                saved_status = self.store().connection.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()["status"]
+                self.assertEqual(saved_status, "saved")
+                _, filtered = self.get("/jobs?status=%s" % application_status)
+                self.assertIn("Python Developer", filtered)
+
+    def test_rejected_status_filter_wins_over_application_record(self):
+        job_id = self.ids["Python Developer"]
+        self.post("/jobs/%s/application" % job_id, {"status": "applied"})
+        self.post("/jobs/%s/decision" % job_id, {"action": "reject", "reason": "role mismatch", "next": "/jobs"})
+        row = self.store().connection.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()
+        self.assertEqual(row["status"], "rejected_by_user")
+        _, applied = self.get("/jobs?status=applied")
+        self.assertIn("Python Developer", applied)
+        _, rejected = self.get("/jobs?status=rejected_by_user")
+        self.assertIn("Python Developer", rejected)
+        _, applications = self.get("/applications")
+        self.assertIn("Python Developer", applications)
+
+    def test_saved_status_filter_matches_saved_page_for_excluded_job(self):
+        job_id = self.ids["Senior Data Platform Engineer"]
+        self.post("/jobs/%s/decision" % job_id, {"action": "save", "next": "/saved"})
+        _, saved = self.get("/saved")
+        self.assertIn("Senior Data Platform Engineer", saved)
+        _, filtered = self.get("/jobs?status=saved")
+        self.assertIn("Senior Data Platform Engineer", filtered)
+
+    def test_include_applied_still_applies_source_filter(self):
+        job_id = self.ids["Python Developer"]
+        self.post("/jobs/%s/application" % job_id, {"status": "applied"})
+        _, matching = self.get("/jobs?include_applied=1&source=himalayas")
+        self.assertIn("Python Developer", matching)
+        _, mismatching = self.get("/jobs?include_applied=1&source=ba")
+        self.assertNotIn("Python Developer", mismatching)
+        _, status_mismatch = self.get("/jobs?status=applied&source=ba")
+        self.assertNotIn("Python Developer", status_mismatch)
+
     def test_invalid_application_status_is_reported(self):
         code, _, body = self.post("/jobs/%s/application" % self.ids["Python Developer"], {"status": "hired"})
         self.assertEqual(code, 400)
@@ -288,6 +595,7 @@ class HttpTests(DashboardFixture):
         self.assertIn("was not found", body)
         self.assertEqual(self.get_error("/nope")[0], 404)
         self.assertEqual(self.post("/jobs/999999/decision", {"action": "save"})[0], 404)
+        self.assertEqual(self.post("/jobs/999999/decision", {"action": "unsave"})[0], 404)
 
     def test_cross_origin_post_is_rejected(self):
         code, _, body = self.post("/jobs/%s/decision" % self.ids["Junior Data Analyst"], {"action": "save"}, headers={"Origin": "http://evil.example"})
@@ -295,6 +603,12 @@ class HttpTests(DashboardFixture):
         self.assertIn("Cross-origin", body)
         status = self.store().connection.execute("SELECT status FROM jobs WHERE id=?", (self.ids["Junior Data Analyst"],)).fetchone()["status"]
         self.assertEqual(status, "discovered")
+        self.post("/jobs/%s/decision" % self.ids["Junior Data Analyst"], {"action": "save"})
+        code, _, body = self.post("/jobs/%s/decision" % self.ids["Junior Data Analyst"], {"action": "unsave"}, headers={"Origin": "http://evil.example"})
+        self.assertEqual(code, 403)
+        self.assertIn("Cross-origin", body)
+        status = self.store().connection.execute("SELECT status FROM jobs WHERE id=?", (self.ids["Junior Data Analyst"],)).fetchone()["status"]
+        self.assertEqual(status, "saved")
 
     def test_search_runs_in_background_and_stores_new_jobs(self):
         before = len(self.store().list_jobs())
@@ -358,6 +672,47 @@ class HttpTests(DashboardFixture):
                 self.assertEqual({call[1] for call in adapter.calls}, {None})
         self.assertEqual(len(self.store().list_jobs()), before + len(expected))
         self.assertIn("Search finished", state["message"])
+
+    def test_search_page_has_mode_specific_source_defaults(self):
+        _, body = self.get("/search")
+        quick, configured = body.split("Full configured search", 1)
+        self.assertIn('name="source" value="adzuna" checked', quick)
+        self.assertNotIn('name="source" value="himalayas" checked', quick)
+        for source in discovery.SOURCE_NAMES:
+            self.assertIn('name="source" value="%s" checked' % source, configured)
+
+    def test_search_post_preserves_repeated_sources_and_propagates_to_manager(self):
+        before_config = self.config_path.read_text(encoding="utf-8")
+        status, _, _ = self.post("/search", {"mode": "query", "query": "Data Analyst", "source": ["himalayas", "ba"], "source_filter": "1"})
+        self.assertEqual(status, 200)
+        state = self.wait_for_search()
+        self.assertEqual(state["source"], ["himalayas", "ba"])
+        self.assertEqual(self.adapters["himalayas"].calls, [("Data Analyst", None)])
+        self.assertEqual(self.adapters["ba"].calls, [("Data Analyst", None)])
+        self.assertEqual(self.adapters["adzuna"].calls, [])
+        self.assertEqual(self.adapters["nomado24"].calls, [])
+        self.assertEqual(self.config_path.read_text(encoding="utf-8"), before_config)
+
+    def test_configured_search_can_use_multiple_selected_sources(self):
+        expected = load_config(self.config_path)["search_queries"]["primary"] + load_config(self.config_path)["search_queries"]["secondary"]
+        before_config = self.config_path.read_text(encoding="utf-8")
+        status, _, _ = self.post("/search", {"mode": "configured", "source": ["himalayas", "ba"], "source_filter": "1"})
+        self.assertEqual(status, 200)
+        state = self.wait_for_search()
+        self.assertEqual(state["source"], ["himalayas", "ba"])
+        self.assertEqual(self.adapters["himalayas"].calls, [(query, None) for query in expected])
+        self.assertEqual(self.adapters["ba"].calls, [(query, None) for query in expected])
+        self.assertEqual(self.adapters["adzuna"].calls, [])
+        self.assertEqual(self.adapters["nomado24"].calls, [])
+        self.assertEqual(self.config_path.read_text(encoding="utf-8"), before_config)
+
+    def test_search_rejects_an_explicitly_empty_source_selection(self):
+        code, _, body = self.post("/search", {"mode": "query", "query": "Data Analyst", "source_filter": "1"})
+        self.assertEqual(code, 400)
+        self.assertIn("Select at least one source", body)
+        code, _, body = self.post("/search", {"mode": "configured", "source_filter": "1"})
+        self.assertEqual(code, 400)
+        self.assertIn("Select at least one source", body)
 
     def test_search_requires_a_query(self):
         code, _, body = self.post("/search", {"mode": "query", "query": "  "})

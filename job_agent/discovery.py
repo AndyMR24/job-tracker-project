@@ -60,15 +60,33 @@ class SearchOutcome:
     skipped: list[str] = field(default_factory=list)
 
 
-def collect(sources, *, queries=None, query=None, source=None, location=None, tolerate_errors=False, progress=None) -> SearchOutcome:
-    """Run one manual query or every configured query through the selected public adapters."""
-    outcome = SearchOutcome()
-    if query is not None:
-        name = source or "adzuna"
-        adapter, accepts_location = sources[name]
-        plans = [(query, [(name, adapter, accepts_location)])]
+def _selected_sources(sources, source):
+    if source is None:
+        return None
+    if isinstance(source, str):
+        names = [source] if source else []
     else:
-        chosen = [(name, adapter, accepts_location) for name, (adapter, accepts_location) in sources.items() if source is None or name == source]
+        names = [str(item) for item in source if item]
+    unknown = sorted(set(names) - set(sources))
+    if unknown:
+        raise ValueError("Unknown source(s): %s" % ", ".join(unknown))
+    return [name for name in sources if name in set(names)]
+
+
+def collect(sources, *, queries=None, query=None, source=None, location=None, tolerate_errors=False, progress=None) -> SearchOutcome:
+    """Run one manual query or every configured query through the selected public adapters.
+
+    `source` may be one name, a sequence of names, or None. A manual query defaults to Adzuna
+    when no source is supplied; a configured search uses all sources when no source is supplied.
+    """
+    outcome = SearchOutcome()
+    selected = _selected_sources(sources, source)
+    if query is not None:
+        names = ["adzuna"] if selected is None else selected
+        plans = [(query, [(name, *sources[name]) for name in names])]
+    else:
+        names = list(sources) if selected is None else selected
+        chosen = [(name, *sources[name]) for name in names]
         plans = [(text, chosen) for text in queries or []]
     total = sum(1 for _, adapters in plans for _, adapter, _ in adapters if not isinstance(adapter, UnavailableSource))
     seen: set[tuple] = set()

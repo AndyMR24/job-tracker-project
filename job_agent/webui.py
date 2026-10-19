@@ -13,6 +13,7 @@ from urllib.parse import urlencode
 from . import dashboard
 
 NAV = (("/", "Overview"), ("/jobs", "Jobs"), ("/saved", "Saved"), ("/applications", "Applications"), ("/search", "Search"), ("/history", "History"), ("/sources", "Sources"))
+PAGE_SIZES = (10, 25, 50, 100)
 
 STYLE = """
 :root { --bg:#f5f6f8; --card:#fff; --line:#d7dbe2; --ink:#1d2430; --muted:#5d6875; --accent:#2757c9; --good:#15683c; --warn:#8a5b00; --bad:#9d2b2d; }
@@ -54,14 +55,40 @@ td.num, th.num { text-align:right; white-space:nowrap; }
 .small { font-size:12px; }
 .notice { border:1px solid #b7e0c4; background:#e9f7ee; color:#14532d; padding:8px 12px; border-radius:6px; margin-bottom:14px; }
 .error { border:1px solid #f3c2c2; background:#fdeaea; color:#7f1d1d; padding:8px 12px; border-radius:6px; margin-bottom:14px; }
-.filters { display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; }
+.filters { display:flex; flex-wrap:wrap; gap:12px 16px; align-items:flex-end; }
 .filters label { display:block; font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin-bottom:2px; }
+.filter-title { display:block; font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin-bottom:2px; }
+.filter-group { display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; min-width:0; }
+.filter-group-primary { flex:1 1 420px; }
+.filter-group-criteria { flex:2 1 640px; }
+.filter-group-footer { flex:1 1 100%; }
+.filter-group-visibility { flex:1 1 auto; }
+.filter-group-actions { margin-left:auto; }
+.source-filter { position:relative; width:250px; max-width:100%; }
+details.source-filter > summary { display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:31px; list-style:none; cursor:pointer; padding:5px 8px; border:1px solid var(--line); border-radius:6px; background:#fff; color:var(--muted); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+details.source-filter > summary::-webkit-details-marker { display:none; }
+details.source-filter > summary::after { content:"\\25be"; flex:0 0 auto; transition:transform .15s ease; }
+details.source-filter[open] > summary::after { transform:rotate(180deg); }
+details.source-filter > summary:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.source-panel { position:absolute; z-index:30; top:calc(100% + 6px); left:0; width:min(340px, calc(100vw - 36px)); max-width:calc(100vw - 36px); padding:10px 12px; background:var(--card); border:1px solid var(--line); border-radius:8px; box-shadow:0 10px 24px rgba(17,26,43,.18); }
+.source-panel .source-options { margin-top:0; }
+.source-options { display:flex; flex-wrap:wrap; gap:4px 10px; }
+.source-options label { display:inline-flex; align-items:center; gap:4px; font-size:12px; color:var(--ink); text-transform:none; letter-spacing:0; margin:0; }
+.source-options input[type="checkbox"] { padding:0; accent-color:var(--accent); }
+.source-actions { margin-top:2px; }
+.search-sources { flex:1 1 260px; min-width:240px; }
+.search-sources .source-options { margin-top:2px; }
 input, select, textarea, button { font:inherit; padding:5px 7px; border:1px solid var(--line); border-radius:6px; background:#fff; color:inherit; }
 button { cursor:pointer; }
 button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
 button.danger { background:#fff; border-color:#e2b6b6; color:var(--bad); }
 form.inline { display:inline-block; margin:0 4px 4px 0; }
-.row-actions { white-space:nowrap; }
+.actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.actions form.inline { margin:0; }
+form.reject-action { display:flex; flex-wrap:wrap; gap:6px; align-items:center; border:1px solid var(--line); border-radius:6px; padding:6px 8px; }
+form.application-action { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+.row-actions { display:inline-flex; flex-wrap:wrap; gap:6px; align-items:center; white-space:normal; }
+.row-actions form.inline { margin:0; }
 ul.plain { margin:6px 0 0; padding-left:18px; }
 ul.plain li { margin:2px 0; }
 .log { max-height:260px; overflow-y:auto; background:#fbfcfe; border:1px solid var(--line); border-radius:6px; margin:6px 0 0; padding:8px 10px 8px 26px; }
@@ -190,6 +217,15 @@ def options_html(values, labels=None, selected=None) -> str:
     return "".join(items)
 
 
+def source_checkboxes(sources, selected) -> str:
+    selected = set(selected)
+    return "".join(
+        '<label><input type="checkbox" name="source" value="%s"%s> %s</label>' % (
+            esc(source), " checked" if source in selected else "", esc(source))
+        for source in sources
+    ) or '<span class="small muted">No sources available.</span>'
+
+
 def band_of(record: dict) -> str:
     return "excluded" if record["excluded"] else record["assessment"]
 
@@ -219,7 +255,8 @@ def job_link(job_id) -> str:
 
 def query_url(path: str, params: dict) -> str:
     kept = {key: value for key, value in params.items() if value not in (None, "", 0)}
-    return path + ("?" + urlencode(kept) if kept else "")
+    query = urlencode(kept, doseq=True)
+    return path + ("?" + query if query else "")
 
 
 def page(title: str, active: str, content: str, *, notice=None, error=None, database=None) -> str:
@@ -252,10 +289,10 @@ def stat_cards(cards) -> str:
     return '<div class="grid">%s</div>' % items
 
 
-def decision_forms(record: dict, next_path: str) -> str:
+def saved_actions(record: dict, next_path: str) -> str:
     return ('<form class="inline" method="post" action="/jobs/%s/decision">'
-            '<input type="hidden" name="action" value="save"><input type="hidden" name="next" value="%s">'
-            '<button type="submit">Save</button></form>'
+            '<input type="hidden" name="action" value="unsave"><input type="hidden" name="next" value="%s">'
+            '<button type="submit">Remove from shortlist</button></form>'
             '<form class="inline" method="post" action="/jobs/%s/decision">'
             '<input type="hidden" name="action" value="reject"><input type="hidden" name="next" value="%s">'
             '<button class="danger" type="submit">Reject</button></form>') % (esc(record["id"]), esc(next_path), esc(record["id"]), esc(next_path))
@@ -275,37 +312,76 @@ def job_table(records, *, actions: bool = False) -> str:
                  esc(record["source"]), status_badge(record), esc(timestamp(record["discovered_at"]))]
         if actions:
             posting = '<a class="small" href="%s" target="_blank" rel="noopener noreferrer">posting</a> ' % esc(record["source_url"]) if record["source_url"] else ""
-            cells.append('<span class="row-actions">%s%s</span>' % (posting, decision_forms(record, "/saved")))
+            cells.append('<span class="row-actions">%s%s</span>' % (posting, saved_actions(record, "/saved")))
         rows.append("<tr>" + "".join("<td>%s</td>" % cell for cell in cells) + "</tr>")
     header = "".join("<th>%s</th>" % esc(name) for name in head)
     return '<div class="wide"><table><thead><tr>%s</tr></thead><tbody>%s</tbody></table></div>' % (header, "".join(rows))
 
 
 def filter_bar(values: dict, sources, statuses, *, action: str = "/jobs") -> str:
+    selected_sources = values.get("source", [])
+    if isinstance(selected_sources, str):
+        selected_sources = [selected_sources] if selected_sources else []
+    selected_sources = set(selected_sources)
+    source_checks = source_checkboxes(sources, selected_sources)
+    selected_names = [source for source in sources if source in selected_sources]
+    if selected_names and len(selected_names) == len(sources):
+        source_label = "Sources: all (%s)" % len(sources)
+    elif not selected_names:
+        source_label = "Sources: none"
+    elif len(selected_names) <= 2:
+        source_label = "Sources: %s" % ", ".join(selected_names)
+    else:
+        source_label = "Sources: %s of %s selected" % (len(selected_names), len(sources))
+    filter_values = {key: value for key, value in values.items() if key != "page"}
+    select_all_url = query_url(action, {**filter_values, "source": list(sources), "source_filter": "1"})
+    clear_url = query_url(action, {**filter_values, "source": [], "source_filter": "1"})
+    source_control = ('<details class="source-filter"%s><summary>%s</summary>'
+                      '<div class="source-panel"><div class="source-options">%s</div>'
+                      '<div class="source-actions small"><a href="%s">select all</a> &middot; <a href="%s">clear</a></div></div></details>') % (
+                          " open" if not selected_names or len(selected_names) != len(sources) else "",
+                          esc(source_label), source_checks, esc(select_all_url), esc(clear_url))
     return """<form class="card filters" method="get" action="%s">
+<input type="hidden" name="source_filter" value="1">
+<div class="filter-group filter-group-primary">
 <div><label for="q">Search text</label><input id="q" type="search" name="q" value="%s" placeholder="title, company, location" size="20"></div>
-<div><label for="source">Source</label><select id="source" name="source"><option value="">any</option>%s</select></div>
+%s
+</div>
+<div class="filter-group filter-group-criteria">
 <div><label for="status">Status</label><select id="status" name="status"><option value="">any</option>%s</select></div>
 <div><label for="assessment">Fit</label><select id="assessment" name="assessment"><option value="">any</option>%s</select></div>
 <div><label for="arrangement">Arrangement</label><select id="arrangement" name="arrangement"><option value="">any</option>%s</select></div>
 <div><label for="min_score">Min score</label><input id="min_score" type="number" name="min_score" min="0" max="100" step="5" value="%s" size="4"></div>
 <div><label for="sort">Sort by</label><select id="sort" name="sort">%s</select></div>
+<div><label for="page_size">Per page</label><select id="page_size" name="page_size">%s</select></div>
+</div>
+<div class="filter-group filter-group-footer">
+<div class="filter-group filter-group-visibility">
 <div><label for="include_excluded">Excluded jobs</label><select id="include_excluded" name="include_excluded">
 <option value="0"%s>hide</option><option value="1"%s>show</option></select></div>
 <div><label for="include_rejected">User rejections</label><select id="include_rejected" name="include_rejected">
 <option value="0"%s>hide</option><option value="1"%s>show</option></select></div>
+<div><label for="include_applied">Tracked applications</label><select id="include_applied" name="include_applied">
+<option value="0"%s>hide</option><option value="1"%s>show</option></select></div>
+</div>
+<div class="filter-group filter-group-actions">
 <div><label>&nbsp;</label><button class="primary" type="submit">Apply</button> <a class="small" href="%s">reset</a></div>
+</div>
+</div>
 </form>""" % (esc(action), esc(values.get("q", "")),
-               options_html(sources, selected=values.get("source", "")),
+               source_control,
                options_html(statuses, labels=dashboard.STATUS_LABELS, selected=values.get("status", "")),
                options_html(dashboard.BANDS, labels=dashboard.BAND_LABELS, selected=values.get("assessment", "")),
                options_html(dashboard.ARRANGEMENTS, selected=values.get("arrangement", "")),
                esc(values.get("min_score", "")),
                options_html(sorted(dashboard.SORTS), labels=dashboard.SORTS, selected=values.get("sort", "score_desc")),
+               options_html((str(size) for size in PAGE_SIZES), selected=values.get("page_size", "25")),
                " selected" if values.get("include_excluded", "0") == "0" else "",
                " selected" if values.get("include_excluded", "0") == "1" else "",
                " selected" if values.get("include_rejected", "0") == "0" else "",
                " selected" if values.get("include_rejected", "0") == "1" else "",
+               " selected" if values.get("include_applied", "0") == "0" else "",
+               " selected" if values.get("include_applied", "0") == "1" else "",
                esc(action))
 
 
@@ -350,17 +426,19 @@ def overview_page(cards, recent, shortlist, applications, sources) -> str:
 
 
 def jobs_page(records, values, sources, statuses, page_number, page_count, total) -> str:
-    hint = '<p class="small muted">Jobs you rejected and jobs the evaluator excluded are hidden by default; set the matching filter to "show" to inspect them. They stay stored either way.</p>'
+    hint = '<p class="small muted">Jobs you rejected, jobs the evaluator excluded and jobs with a tracked application are hidden by default; set the matching filter to "show" to inspect them. Saving adds a job to your shortlist and does not record an application. They stay stored either way.</p>'
     return ('<h2>Jobs <span class="small muted">%s matching</span></h2>' % total) + filter_bar(values, sources, statuses) + hint + job_table(records) + pager("/jobs", values, page_number, page_count, total)
 
 
 def job_detail_page(record, trail, cv_versions) -> str:
     evaluation = record["evaluation"]
+    posting = link(record["source_url"], record["source_url"]) if record["source_url"] else (
+        '<span class="muted">No direct vacancy link provided by BA.</span>' if record["source"] == "ba" else '<span class="muted">&ndash;</span>')
     facts = [("Company", esc(record["company"] or "unknown")), ("Location", esc(record["location"] or "unknown")),
              ("Arrangement", esc(record["arrangement"])), ("Seniority", esc(record["seniority"])),
              ("Employment type", esc(record["employment_type"] or "unknown")), ("Salary", esc(record["salary"] or "unknown")),
              ("Source", esc(record["source"])), ("External ID", esc(record["external_job_id"] or "-")),
-             ("Original posting", link(record["source_url"], record["source_url"])),
+             ("Original posting", posting),
              ("Discovered (UTC)", esc(timestamp(record["discovered_at"]))), ("Last seen (UTC)", esc(timestamp(record["last_seen_at"]))),
              ("Status", esc(dashboard.STATUS_LABELS.get(record["status"], record["status"])))]
     if record["rejection_reason"]:
@@ -373,15 +451,27 @@ def job_detail_page(record, trail, cv_versions) -> str:
     requirement_rows = "".join('<tr><td>%s</td><td><span class="badge kind">%s</span></td><td>%s</td></tr>' % (esc(item.get("text", "")), esc(item.get("kind", "unknown")), esc(item.get("category", "skill"))) for item in record["requirements"])
     if not requirement_rows:
         requirement_rows = '<tr><td colspan="3" class="muted">No explicit requirements were extracted for this listing.</td></tr>'
+    decision = "unsave" if record["status"] == "saved" else "save"
+    decision_label = "Remove from shortlist" if decision == "unsave" else "Save to shortlist"
+    shortlist_form = ('<form class="inline" method="post" action="/jobs/%s/decision">'
+                      '<input type="hidden" name="action" value="%s"><input type="hidden" name="next" value="/jobs/%s">'
+                      '<button%s type="submit">%s</button></form>') % (
+                          esc(record["id"]), decision, esc(record["id"]),
+                          ' class="primary"' if decision == "save" else "", decision_label)
     actions = """<div class="card"><h3>Actions</h3>
-<form class="inline" method="post" action="/jobs/%s/decision"><input type="hidden" name="action" value="save"><input type="hidden" name="next" value="/jobs/%s"><button class="primary" type="submit">Save job</button></form>
-<form class="inline" method="post" action="/jobs/%s/decision"><input type="hidden" name="action" value="reject"><input type="hidden" name="next" value="/jobs/%s">
-<select name="reason"><option value="">reason (optional)</option>%s</select><button class="danger" type="submit">Reject job</button></form>
+<div class="actions">
+%s
+<form class="reject-action" method="post" action="/jobs/%s/decision">
+<input type="hidden" name="action" value="reject"><input type="hidden" name="next" value="/jobs/%s">
+<label for="reject-reason" class="small muted">Reject reason (optional)</label>
+<select id="reject-reason" name="reason"><option value="">none</option>%s</select>
+<button class="danger" type="submit">Reject job</button></form>
 <form class="inline" method="post" action="/jobs/%s/cv"><button type="submit">Generate tailored CV</button></form>
-<form class="inline" method="post" action="/jobs/%s/application"><select name="status">%s</select>
+<form class="application-action" method="post" action="/jobs/%s/application"><select name="status">%s</select>
 <input type="date" name="date"><input type="text" name="notes" placeholder="notes" size="14"><button type="submit">Record application status</button></form>
+</div>
 <p class="small muted">The tool never submits applications or contacts employers. Track your manual progress here.</p></div>""" % (
-        esc(record["id"]), esc(record["id"]), esc(record["id"]), esc(record["id"]),
+        shortlist_form, esc(record["id"]), esc(record["id"]),
         "".join('<option value="%s">%s</option>' % (esc(reason), esc(reason)) for reason in dashboard.REJECTION_REASONS),
         esc(record["id"]), esc(record["id"]), options_html(dashboard.APPLICATION_STATUSES, labels=dashboard.STATUS_LABELS))
     if cv_versions:
@@ -401,8 +491,8 @@ def job_detail_page(record, trail, cv_versions) -> str:
 
 def saved_page(records) -> str:
     if not records:
-        return '<h2>Saved jobs</h2><div class="card"><p>No saved jobs yet.</p><p class="small muted">Open <a href="/jobs">Jobs</a>, pick a promising listing and choose Save.</p></div>'
-    return ('<h2>Saved jobs <span class="small muted">%s</span></h2>' % len(records)) + job_table(records, actions=True) + '<p class="small muted">Save and reject act on the same status the CLI uses, for example <code>job-agent save JOB_ID</code>.</p>'
+        return '<h2>Saved jobs</h2><div class="card"><p>No saved jobs yet.</p><p class="small muted">Open a job from <a href="/jobs">Jobs</a> and choose Save to shortlist.</p></div>'
+    return ('<h2>Saved jobs <span class="small muted">%s</span></h2>' % len(records)) + job_table(records, actions=True) + '<p class="small muted">Removing from the shortlist changes only that decision; the job and any application history stay stored.</p>'
 
 
 def applications_page(applications, candidates, statuses) -> str:
@@ -459,21 +549,26 @@ def sources_page(statistics, summary, config) -> str:
 
 def search_page(state, search_events, source_names, configured_queries) -> str:
     history = "".join('<li>%s &middot; %s%s</li>' % (esc(timestamp(item["created_at"])), esc(item["event"]), (" &middot; " + esc(item["details"])) if item["details"] else "") for item in search_events) or '<li class="muted">No searches recorded yet.</li>'
+    quick_default = ["adzuna"] if "adzuna" in source_names else source_names[:1]
+    quick_control = '<div class="search-sources"><span class="filter-title">Sources</span><div class="source-options">%s</div></div>' % source_checkboxes(source_names, quick_default)
+    configured_control = '<div class="search-sources"><span class="filter-title">Sources</span><div class="source-options">%s</div></div>' % source_checkboxes(source_names, source_names)
     return """<h2>Search public job sources</h2>
 <div class="notice" id="search-notice" hidden></div>
 <div class="two-col">
 <div>
 <div class="card"><h3>Quick search</h3>
 <form class="filters" method="post" action="/search">
+<input type="hidden" name="source_filter" value="1">
 <div><label for="query">Query</label><input id="query" type="text" name="query" placeholder="Data Analyst" required></div>
-<div><label for="source">Source</label><select id="source" name="source">%s</select></div>
+%s
 <div><label for="location">Location</label><input id="location" type="text" name="location" placeholder="optional city filter"></div>
 <div><label>&nbsp;</label><button class="primary" type="submit">Run one query</button></div>
 </form>
-<p class="small muted">Only the public query text, and an optional location filter, are sent to the selected public source.</p></div>
+<p class="small muted">Only the public query text and an optional location filter are sent to the selected public source(s).</p></div>
 <div class="card"><h3>Full configured search</h3>
-<form method="post" action="/search"><input type="hidden" name="mode" value="configured">
-<p class="small">Runs all <strong>%s</strong> queries configured in <code>data/search_config.json</code> through all %s public sources (%s), exactly like <code>job-agent search</code> without a query. This can take several minutes; progress is shown below.</p>
+<form method="post" action="/search"><input type="hidden" name="mode" value="configured"><input type="hidden" name="source_filter" value="1">
+%s
+<p class="small">Runs all <strong>%s</strong> queries configured in <code>data/search_config.json</code> through the selected public sources (default: all %s: %s). This can take several minutes; progress is shown below.</p>
 <button type="submit">Run configured search</button></form></div>
 <h3>Search status</h3>
 <div class="card" id="search-status"><p class="small muted">Loading status...</p></div>
@@ -484,7 +579,7 @@ def search_page(state, search_events, source_names, configured_queries) -> str:
 <div class="card"><h3>Recent searches</h3><ul class="plain small">%s</ul></div>
 </div>
 </div>
-%s""" % (options_html(source_names), configured_queries, len(source_names), esc(", ".join(source_names)), history, SEARCH_SCRIPT)
+%s""" % (quick_control, configured_control, configured_queries, len(source_names), esc(", ".join(source_names)), history, SEARCH_SCRIPT)
 
 
 def error_page(status: int, message: str, database=None) -> str:

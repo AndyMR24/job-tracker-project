@@ -32,6 +32,7 @@ class RegressionTests(unittest.TestCase):
             store = Store(Path(directory) / "jobs.sqlite")
             with self.assertRaises(KeyError): store.set_decision(999, "save")
             with self.assertRaises(KeyError): store.set_decision(999, "reject")
+            with self.assertRaises(KeyError): store.remove_from_shortlist(999)
             with self.assertRaises(KeyError): store.update_application(999, "applied", None, None)
             with self.assertRaises(KeyError): store.save_cv(999, "draft.pdf", [])
             self.assertEqual(store.list_jobs(), [])

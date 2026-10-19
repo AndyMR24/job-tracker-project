@@ -70,7 +70,23 @@ The dashboard stays thin: `discovery.py` holds the public-search orchestration (
 per-source de-duplication, optional error tolerance) and the normalize/evaluate/store pipeline, and
 both `cli.py` and the dashboard call it, so search behavior is defined once. `dashboard.py` contains
 read-only projections (filtering, sorting, aggregates, audit and search history) over rows returned
-by `Store`; evaluator-excluded jobs and user-rejected jobs are hidden unless a filter asks for them.
+by `Store`; evaluator-excluded jobs, user-rejected jobs and jobs with a row in `applications` are
+hidden unless a filter asks for them. The `applications` table is the source of truth for "has an
+application"; the dashboard must not infer it from `jobs.status`, which save/reject decisions can
+change. `filter_jobs` treats `discovered`, `saved` and `rejected_by_user` as job-decision values
+matching `jobs.status`, while `APPLICATION_STATUSES` match the `application_status` annotation built
+from `applications`. A recognized status is an explicit query and overrides the three default hides;
+unknown values retain the old `jobs.status` match. `include_applied` controls only the default view.
+The Jobs source filter is a compact `<details>` picker containing repeated `source` checkboxes.
+`source_filter=1` distinguishes an explicitly cleared selection (no jobs) from the initial
+unfiltered view (all available sources); `query_url` encodes repeated values with `doseq=True`.
+Available choices are `discovery.SOURCE_NAMES` plus any source names already present in stored
+records. The Jobs per-page selector uses `webui.PAGE_SIZES` (10, 25, 50, 100), with 25 as the
+default; invalid or missing values fall back to 25 and the selected size stays in the filter values.
+Search-tab source selection is separate: `_start_search` accepts repeated POST `source` values,
+`SearchManager` carries the selected list, and `discovery.collect` normalizes a string, sequence, or
+None. Quick search defaults to Adzuna; configured search defaults to all sources; an explicit empty
+selection is rejected and never rewrites `search_config.json`.
 `webui.py` renders server-side HTML and escapes every dynamic value, formats stored timestamps with
 `webui.timestamp()` (DD-MM-YYYY, HH:MM, presentation only - the stored UTC values are shown without
 conversion) and labels `Requirement.kind` as "Stated as" without changing the underlying data. The
@@ -109,6 +125,24 @@ lifecycle, discovery and viewing, decisions, application status changes, CV gene
 re-evaluation and recorded approvals; `storage.py` and `cli.py` hold the exact names. Nothing in the
 schema stores credentials. Audit events should record only what traceability needs - the event, the
 job reference and short details - and avoid unnecessary personal information.
+
+`remove_from_shortlist` only accepts a job whose current status is `saved`. It restores
+`jobs.status` to the existing `applications.status` when an application row exists, otherwise to
+`discovered`, clears `rejection_reason`, and records `job_removed_from_shortlist`. It never deletes
+the job, application, CV-version, or audit rows.
+
+`jobs.status` is the current mirrored status used by the CLI and the Saved view, while
+`applications.status` is authoritative for application-status filtering. Recording an application
+still mirrors its status into `jobs.status`; consequently a job can have `jobs.status = saved` and an
+`applications` row with `status = applied` after a later Save action. Dashboard filters must use the
+application annotation for application-status queries and must not infer application state from
+`jobs.status`. The Saved route is based on `jobs.status = saved`, while Applications is based on the
+`applications` table.
+
+`update_application` stores the local calendar date when the effective status is `applied` and no
+explicit or existing date is available. It preserves an explicit date and never clears an existing
+date when a later status update omits one; a first application recorded directly in a non-`applied`
+status keeps a missing date missing.
 
 ## Evaluation policy
 
@@ -198,10 +232,13 @@ Source field behaviour, observed against live responses on 2026-09-23 and relied
   job is excluded while worldwide, Europe and Germany listings keep the existing remote handling.
   The payload has no `remote`/`isRemote` field, so the adapter leaves the arrangement unknown, and it
   publishes `minSalary`/`maxSalary`/`companyName`, which the adapter only partly reads.
-- A Bundesagentur fuer Arbeit Jobsuche search item exposes the employer application link as
-  `externeURL` (capital URL) and the detail payload does not repeat it. Because the API publishes no
-  canonical arbeitsagentur.de posting URL, the adapter preserves `externeURL` when present and
-  leaves `source_url` unknown otherwise instead of constructing a link.
+- A Bundesagentur fuer Arbeit Jobsuche search item or detail response may expose the employer
+  application link as `externeURL` (capital URL); it is not present for every listing. When neither
+  response supplies one, the adapter promotes only a clearly labelled
+  `Bewerbungsformular: [label](http(s)://...)` Markdown link from the description. It does not use
+  `allianzpartnerUrl` (a bare partner/employer domain) or arbitrary description links, and it does
+  not construct a canonical arbeitsagentur.de URL. If no direct vacancy link exists, the detail page
+  reports that explicitly.
 - Adzuna typically returns description snippets; listings flagged with
   `metadata.description_is_snippet` lose points and carry an explicit uncertainty.
 

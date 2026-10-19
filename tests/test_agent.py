@@ -2,6 +2,7 @@ import json
 import shutil
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
@@ -71,6 +72,71 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(store.applications()[0]["status"], "applied")
         with self.assertRaises(ValueError): store.update_application(job_id, "saved", None, None)
         store.close()
+
+    def test_application_date_defaults_for_applied_and_is_preserved(self):
+        store = Store(self.root / "agent.sqlite")
+        try:
+            job_id, _ = store.save_job(Job("Role"), {"score": 10})
+            today = date.today().isoformat()
+            store.update_application(job_id, "applied", None, None)
+            self.assertEqual(store.applications()[0]["application_date"], today)
+            store.update_application(job_id, "interview", None, None)
+            self.assertEqual(store.applications()[0]["application_date"], today)
+            store.update_application(job_id, "offer", "2026-02-03", None)
+            self.assertEqual(store.applications()[0]["application_date"], "2026-02-03")
+            store.update_application(job_id, "withdrawn", None, None)
+            self.assertEqual(store.applications()[0]["application_date"], "2026-02-03")
+
+            other_id, _ = store.save_job(Job("Other"), {"score": 10})
+            store.update_application(other_id, "interview", None, None)
+            other = next(row for row in store.applications() if row["job_id"] == other_id)
+            self.assertIsNone(other["application_date"])
+            store.update_application(other_id, "applied", None, None)
+            other = next(row for row in store.applications() if row["job_id"] == other_id)
+            self.assertEqual(other["application_date"], today)
+        finally:
+            store.close()
+
+    def test_remove_from_shortlist_restores_status_without_deleting_records(self):
+        store = Store(self.root / "agent.sqlite")
+        try:
+            plain_id, _ = store.save_job(Job("Plain"), {"score": 10})
+            store.set_decision(plain_id, "save")
+            store.remove_from_shortlist(plain_id)
+            plain = store.connection.execute("SELECT status,rejection_reason FROM jobs WHERE id=?", (plain_id,)).fetchone()
+            self.assertEqual((plain["status"], plain["rejection_reason"]), ("discovered", None))
+
+            applied_id, _ = store.save_job(Job("Applied"), {"score": 10})
+            store.update_application(applied_id, "applied", "2026-01-02", "sent manually")
+            store.set_decision(applied_id, "save", "stale reason")
+            store.save_cv(applied_id, "draft.pdf", [])
+            before_jobs = store.connection.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
+            before_applications = store.connection.execute("SELECT COUNT(*) FROM applications").fetchone()[0]
+            before_cv = store.connection.execute("SELECT COUNT(*) FROM cv_versions").fetchone()[0]
+            before_audit = len(store.history())
+
+            store.remove_from_shortlist(applied_id)
+            row = store.connection.execute("SELECT status,rejection_reason FROM jobs WHERE id=?", (applied_id,)).fetchone()
+            self.assertEqual((row["status"], row["rejection_reason"]), ("applied", None))
+            application = next(item for item in store.applications() if item["job_id"] == applied_id)
+            self.assertEqual((application["status"], application["application_date"], application["notes"]), ("applied", "2026-01-02", "sent manually"))
+            self.assertEqual(store.connection.execute("SELECT COUNT(*) FROM jobs").fetchone()[0], before_jobs)
+            self.assertEqual(store.connection.execute("SELECT COUNT(*) FROM applications").fetchone()[0], before_applications)
+            self.assertEqual(store.connection.execute("SELECT COUNT(*) FROM cv_versions").fetchone()[0], before_cv)
+            events = [item["event"] for item in store.history()]
+            self.assertEqual(len(events), before_audit + 1)
+            self.assertEqual(events[0], "job_removed_from_shortlist")
+        finally:
+            store.close()
+
+    def test_remove_from_shortlist_rejects_a_job_that_is_not_saved(self):
+        store = Store(self.root / "agent.sqlite")
+        try:
+            job_id, _ = store.save_job(Job("Role"), {"score": 10})
+            with self.assertRaises(ValueError):
+                store.remove_from_shortlist(job_id)
+        finally:
+            store.close()
 
     @unittest.skipUnless(shutil.which("pdflatex"), "pdflatex is not installed in this test environment")
     def test_cv_uses_profile_facts_without_claiming_employment(self):

@@ -51,6 +51,51 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertIsNone(job["source_url"])
         self.assertEqual(job["metadata"]["beruf"], None)
 
+    def test_ba_preserves_a_detail_only_external_url(self):
+        reference = "10001-1003580281-S"
+        search = {"ergebnisliste": [{"stellenangebotsTitel": "Data Analyst", "referenznummer": reference}]}
+        detail = {"stellenangebotsTitel": "Data Analyst", "referenznummer": reference, "externeURL": "https://detail.example/apply", "allianzpartnerUrl": "www.xing.com"}
+        with patch("job_agent.ba.urllib.request.urlopen", side_effect=[Response(search), Response(detail)]):
+            job = BASource().search("Data Analyst", size=1)[0]
+        self.assertEqual(job["source_url"], "https://detail.example/apply")
+
+    def test_ba_extracts_a_labelled_application_form_link_from_the_description(self):
+        reference = "10001-1003580282-S"
+        description = "Bewerbungsformular: [Zum Bewerbungsformular](https://recruiting.example.test/apply/42)"
+        search = {"ergebnisliste": [{"stellenangebotsTitel": "Data Analyst", "referenznummer": reference}]}
+        detail = {"stellenangebotsTitel": "Data Analyst", "referenznummer": reference, "stellenangebotsBeschreibung": description}
+        with patch("job_agent.ba.urllib.request.urlopen", side_effect=[Response(search), Response(detail)]):
+            job = BASource().search("Data Analyst", size=1)[0]
+        self.assertEqual(job["source_url"], "https://recruiting.example.test/apply/42")
+        self.assertEqual(job["description"], description)
+
+    def test_ba_does_not_extract_unrelated_description_links(self):
+        reference = "10001-1003580283-S"
+        description = "Datenschutz: [Hinweise](https://example.test/privacy)\nKarriere: [Overview](https://example.test/career)"
+        search = {"ergebnisliste": [{"stellenangebotsTitel": "Data Analyst", "referenznummer": reference}]}
+        detail = {"stellenangebotsTitel": "Data Analyst", "referenznummer": reference, "stellenangebotsBeschreibung": description}
+        with patch("job_agent.ba.urllib.request.urlopen", side_effect=[Response(search), Response(detail)]):
+            job = BASource().search("Data Analyst", size=1)[0]
+        self.assertIsNone(job["source_url"])
+
+    def test_ba_does_not_accept_unsupported_description_schemes(self):
+        reference = "10001-1003580284-S"
+        description = "Bewerbungsformular: [E-Mail senden](mailto:jobs@example.test)"
+        search = {"ergebnisliste": [{"stellenangebotsTitel": "Data Analyst", "referenznummer": reference}]}
+        detail = {"stellenangebotsTitel": "Data Analyst", "referenznummer": reference, "stellenangebotsBeschreibung": description}
+        with patch("job_agent.ba.urllib.request.urlopen", side_effect=[Response(search), Response(detail)]):
+            job = BASource().search("Data Analyst", size=1)[0]
+        self.assertIsNone(job["source_url"])
+
+    def test_ba_prefers_explicit_external_url_over_a_description_link(self):
+        reference = "10001-1003580285-S"
+        description = "Bewerbungsformular: [Zum Bewerbungsformular](https://description.example/apply)"
+        search = {"ergebnisliste": [{"stellenangebotsTitel": "Data Analyst", "referenznummer": reference, "externeURL": "https://search.example/apply"}]}
+        detail = {"stellenangebotsTitel": "Data Analyst", "referenznummer": reference, "stellenangebotsBeschreibung": description}
+        with patch("job_agent.ba.urllib.request.urlopen", side_effect=[Response(search), Response(detail)]):
+            job = BASource().search("Data Analyst", size=1)[0]
+        self.assertEqual(job["source_url"], "https://search.example/apply")
+
     def test_himalayas_restriction_semantics_are_preserved(self):
         payload = {"jobs": [
             {"guid": "h1", "title": "US only Analyst", "locationRestrictions": ["United States", "Canada"], "timezoneRestrictions": [-8, -5]},

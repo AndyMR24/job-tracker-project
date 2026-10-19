@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from .models import Job
@@ -73,10 +73,25 @@ class Store:
         self._ensure_job_exists(job_id)
         self.connection.execute("UPDATE jobs SET status=?,rejection_reason=? WHERE id=?", (status, reason, job_id)); self.connection.commit(); self.audit(f"job_{decision}d", job_id, reason)
 
+    def remove_from_shortlist(self, job_id: int) -> None:
+        self._ensure_job_exists(job_id)
+        row = self.connection.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()
+        if row["status"] != "saved":
+            raise ValueError(f"Job {job_id} is not on the shortlist.")
+        application = self.connection.execute("SELECT status FROM applications WHERE job_id=?", (job_id,)).fetchone()
+        status = application["status"] if application else "discovered"
+        self.connection.execute("UPDATE jobs SET status=?,rejection_reason=NULL WHERE id=?", (status, job_id))
+        self.connection.commit()
+        self.audit("job_removed_from_shortlist", job_id)
+
     def update_application(self, job_id: int, status: str, application_date: str | None, notes: str | None) -> None:
         if status not in STATUSES - {"discovered", "saved", "rejected_by_user"}: raise ValueError(f"Invalid application status: {status}")
         self._ensure_job_exists(job_id)
-        self.connection.execute("INSERT INTO applications(job_id,status,application_date,notes,updated_at) VALUES (?,?,?,?,?) ON CONFLICT(job_id) DO UPDATE SET status=excluded.status,application_date=COALESCE(excluded.application_date,applications.application_date),notes=COALESCE(excluded.notes,applications.notes),updated_at=excluded.updated_at", (job_id,status,application_date,notes,now()))
+        existing = self.connection.execute("SELECT application_date FROM applications WHERE job_id=?", (job_id,)).fetchone()
+        effective_date = application_date or (existing["application_date"] if existing else None)
+        if status == "applied" and not effective_date:
+            effective_date = date.today().isoformat()
+        self.connection.execute("INSERT INTO applications(job_id,status,application_date,notes,updated_at) VALUES (?,?,?,?,?) ON CONFLICT(job_id) DO UPDATE SET status=excluded.status,application_date=COALESCE(excluded.application_date,applications.application_date),notes=COALESCE(excluded.notes,applications.notes),updated_at=excluded.updated_at", (job_id,status,effective_date,notes,now()))
         self.connection.execute("UPDATE jobs SET status=? WHERE id=?", (status,job_id)); self.connection.commit(); self.audit("application_status_changed", job_id, status)
 
     def applications(self): return self.connection.execute("SELECT a.*,j.payload FROM applications a JOIN jobs j ON j.id=a.job_id ORDER BY a.updated_at DESC").fetchall()
