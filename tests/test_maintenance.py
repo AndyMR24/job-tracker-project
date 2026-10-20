@@ -44,6 +44,7 @@ class MaintenanceTests(unittest.TestCase):
         self.store.set_decision(self.ids["saved"], "save")
         self.store.set_decision(self.ids["rejected"], "reject", "too far")
         self.store.update_application(self.ids["saved"], "applied", "2026-09-20", "sent manually")
+        self.store.save_cv(self.ids["saved"], "draft.pdf", ["education"])
         self.before = self.snapshot()
 
     def tearDown(self):
@@ -54,8 +55,9 @@ class MaintenanceTests(unittest.TestCase):
         jobs = {row["id"]: (row["payload"], row["status"], row["rejection_reason"], row["viewed"], row["last_seen_at"]) for row in self.store.list_jobs(include_rejected=True)}
         evaluations = {row["job_id"]: (row["payload"], row["created_at"]) for row in self.store.connection.execute("SELECT * FROM evaluations")}
         applications = [(row["job_id"], row["status"], row["application_date"], row["notes"]) for row in self.store.applications()]
+        cv_versions = [(row["job_id"], row["path"], row["source_facts"]) for row in self.store.cv_versions()]
         audit = [(row["event"], row["job_id"], row["details"]) for row in self.store.history()]
-        return {"jobs": jobs, "evaluations": evaluations, "applications": applications, "audit": audit}
+        return {"jobs": jobs, "evaluations": evaluations, "applications": applications, "cv_versions": cv_versions, "audit": audit}
 
     def evaluation_of(self, job_id):
         return json.loads(self.store.connection.execute("SELECT payload FROM evaluations WHERE job_id=?", (job_id,)).fetchone()["payload"])
@@ -82,9 +84,37 @@ class MaintenanceTests(unittest.TestCase):
         after = self.snapshot()
         self.assertEqual(after["jobs"], self.before["jobs"])
         self.assertEqual(after["applications"], self.before["applications"])
+        self.assertEqual(after["cv_versions"], self.before["cv_versions"])
         self.assertEqual(after["audit"], self.before["audit"])
         self.assertEqual(after["jobs"][self.ids["saved"]][1], "applied")
         self.assertEqual(after["jobs"][self.ids["rejected"]][1:3], ("rejected_by_user", "too far"))
+
+    def test_refresh_applies_a_new_radius_without_touching_user_managed_state(self):
+        fixture = {
+            "title": "Data Analyst",
+            "source": "adzuna",
+            "external_job_id": "frankfurt",
+            "source_url": "https://adzuna.test/frankfurt",
+            "location": "Frankfurt am Main, Hessen",
+            "arrangement": "hybrid",
+        }
+        job = normalize(fixture)
+        old_result = evaluate(job, self.profile, self.config)
+        self.assertFalse(old_result.excluded)
+        job_id, _ = self.store.save_job(job, old_result.to_dict())
+        before = self.snapshot()
+        config = {
+            **self.config,
+            "location_preferences": {**self.config["location_preferences"], "max_distance_km": 100},
+        }
+        refresh_evaluations(self.store, self.profile, config)
+        after = self.snapshot()
+        refreshed = self.evaluation_of(job_id)
+        self.assertTrue(refreshed["excluded"])
+        self.assertTrue(any("Frankfurt am Main" in concern for concern in refreshed["concerns"]))
+        for field in ("jobs", "applications", "cv_versions", "audit"):
+            with self.subTest(field=field):
+                self.assertEqual(after[field], before[field])
 
     def test_refresh_is_idempotent(self):
         refresh_evaluations(self.store, self.profile, self.config)

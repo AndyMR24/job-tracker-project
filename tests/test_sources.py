@@ -1,10 +1,15 @@
 import base64
 import json
+import tempfile
 import unittest
+from pathlib import Path
 from urllib.parse import quote
 from unittest.mock import patch
 
 from job_agent.ba import BASource
+from job_agent.location import LocationStatus, resolve_location
+from job_agent.normalizer import normalize
+from job_agent.storage import Store
 from job_agent.himalayas import HimalayasSource
 from job_agent.nomado24 import Nomado24Source
 
@@ -37,8 +42,10 @@ class SourceAdapterTests(unittest.TestCase):
         responses = [Response(search), Response(detail)]
         with patch("job_agent.ba.urllib.request.urlopen", side_effect=responses) as mocked:
             job = BASource().search("Data Analyst", "Aachen", size=1)[0]
-        self.assertEqual(job["source"], "ba"); self.assertEqual(job["description"], "Full description"); self.assertEqual(job["location"], "Aachen, NRW, Deutschland"); self.assertEqual(job["arrangement"], "unknown")
+        self.assertEqual(job["source"], "ba"); self.assertEqual(job["description"], "Full description"); self.assertEqual(job["location"], "Aachen"); self.assertEqual(job["arrangement"], "unknown")
         self.assertEqual(job["source_url"], "https://employer.example/apply?utm_source=bundesagentur")
+        self.assertEqual(job["metadata"]["region"], "NRW")
+        self.assertEqual(job["metadata"]["country"], "Deutschland")
         expected = base64.b64encode(reference.encode()).decode()
         self.assertIn(quote(expected, safe=""), mocked.call_args_list[1].args[0].full_url)
 
@@ -48,8 +55,72 @@ class SourceAdapterTests(unittest.TestCase):
         detail = {"stellenangebotsTitel": "Data Analyst", "referenznummer": reference, "allianzpartnerUrl": "www.ferchau.de"}
         with patch("job_agent.ba.urllib.request.urlopen", side_effect=[Response(search), Response(detail)]):
             job = BASource().search("Data Analyst", size=1)[0]
+        self.assertIsNone(job["location"])
         self.assertIsNone(job["source_url"])
         self.assertEqual(job["metadata"]["beruf"], None)
+
+    def test_ba_maps_nested_detail_address_and_coordinates(self):
+        reference = "10001-1003580286-S"
+        search = {"ergebnisliste": [{"stellenangebotsTitel": "Data Analyst", "referenznummer": reference}]}
+        detail = {
+            "stellenangebotsTitel": "Data Analyst",
+            "referenznummer": reference,
+            "stellenlokationen": [{
+                "adresse": {"plz": "01307", "ort": "Dresden", "region": "SACHSEN", "land": "DEUTSCHLAND"},
+                "breite": 51.0526313,
+                "laenge": 13.7705539,
+            }],
+        }
+        with patch("job_agent.ba.urllib.request.urlopen", side_effect=[Response(search), Response(detail)]):
+            job = BASource().search("Data Analyst", size=1)[0]
+        self.assertEqual(job["location"], "Dresden")
+        self.assertEqual(job["metadata"]["postal_code"], "01307")
+        self.assertEqual(job["metadata"]["region"], "SACHSEN")
+        self.assertEqual(job["metadata"]["country"], "DEUTSCHLAND")
+        self.assertEqual(job["metadata"]["latitude"], 51.0526313)
+        self.assertEqual(job["metadata"]["longitude"], 13.7705539)
+
+    def test_ba_location_survives_normalization_storage_and_distance_resolution(self):
+        reference = "10001-1003580287-S"
+        search = {"ergebnisliste": [{"stellenangebotsTitel": "Data Analyst", "referenznummer": reference}]}
+        detail = {
+            "stellenangebotsTitel": "Data Analyst",
+            "referenznummer": reference,
+            "stellenlokationen": [{
+                "adresse": {"plz": "52062", "ort": "Aachen", "region": "NRW", "land": "DEUTSCHLAND"},
+                "breite": 50.7753,
+                "laenge": 6.0839,
+            }],
+        }
+        with patch("job_agent.ba.urllib.request.urlopen", side_effect=[Response(search), Response(detail)]):
+            raw = BASource().search("Data Analyst", size=1)[0]
+        job = normalize(raw)
+        self.assertEqual(job.location, "Aachen")
+        self.assertEqual(resolve_location(job.location, {"origin": "Aachen", "max_distance_km": 225}).status, LocationStatus.WITHIN_RADIUS)
+        with tempfile.TemporaryDirectory() as directory:
+            store = Store(Path(directory) / "jobs.sqlite")
+            try:
+                job_id, _ = store.save_job(job, {"score": 50})
+                stored, _, _ = store.get_job(job_id)
+            finally:
+                store.close()
+        self.assertEqual(stored.location, "Aachen")
+        self.assertEqual(stored.metadata["postal_code"], "52062")
+
+    def test_ba_partial_location_keeps_unknown_fields(self):
+        reference = "10001-1003580288-S"
+        search = {"ergebnisliste": [{"stellenangebotsTitel": "Data Analyst", "referenznummer": reference}]}
+        detail = {
+            "stellenangebotsTitel": "Data Analyst",
+            "referenznummer": reference,
+            "stellenlokationen": [{"adresse": {"ort": "Aachen"}}],
+        }
+        with patch("job_agent.ba.urllib.request.urlopen", side_effect=[Response(search), Response(detail)]):
+            job = BASource().search("Data Analyst", size=1)[0]
+        self.assertEqual(job["location"], "Aachen")
+        self.assertIsNone(job["metadata"]["postal_code"])
+        self.assertIsNone(job["metadata"]["region"])
+        self.assertIsNone(job["metadata"]["country"])
 
     def test_ba_preserves_a_detail_only_external_url(self):
         reference = "10001-1003580281-S"

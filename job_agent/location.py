@@ -5,6 +5,7 @@ import math
 import re
 from dataclasses import dataclass
 from enum import Enum
+from functools import lru_cache
 
 
 class LocationStatus(str, Enum):
@@ -37,24 +38,41 @@ _FALLBACK_CITIES = {
     "berlin": (52.5200, 13.4050),
 }
 _VAGUE = {"germany", "deutschland", "europe", "north rhine-westphalia", "nordrhein-westfalen"}
+_SAME_LOCALITY_KM = 25.0
+
+
+def _distance_km(origin: tuple[float, float], destination: tuple[float, float]) -> float:
+    lat1, lon1 = map(math.radians, origin)
+    lat2, lon2 = map(math.radians, destination)
+    delta_lat, delta_lon = lat2 - lat1, lon2 - lon1
+    haversine = math.sin(delta_lat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(delta_lon / 2) ** 2
+    return 6371.0088 * 2 * math.asin(math.sqrt(haversine))
 
 
 def extract_city(location: str | None) -> str | None:
     if not location:
         return None
     parts = [part.strip() for part in location.split(",") if part.strip()]
-    if not parts or location.strip().lower() in _VAGUE or len(parts) > 2:
+    if not parts or location.strip().lower() in _VAGUE:
         return None
-    first = re.sub(r"\s*\([^)]*\)\s*$", "", parts[0]).strip()
-    if not first or first.lower() in _VAGUE:
+    cleaned = [re.sub(r"\s*\([^)]*\)\s*$", "", part).strip() for part in parts]
+    cleaned = [part for part in cleaned if part and part.lower() not in _VAGUE]
+    if not cleaned:
         return None
-    if len(parts) == 2 and parts[1].strip().lower() == first.lower():
-        return first
-    if len(parts) == 2 and "kreis" in parts[1].lower():
-        return first
-    return first if len(parts) == 1 else None
+    candidates = [(name, _city_coordinates(name)) for name in cleaned]
+    resolved = [(name, coordinates) for name, coordinates in candidates if coordinates]
+    if not resolved:
+        return cleaned[0] if len(cleaned) == 1 else None
+    if len(resolved) == 1:
+        return resolved[0][0]
+    first_coordinates = resolved[0][1]
+    if all(_distance_km(first_coordinates, coordinates) <= _SAME_LOCALITY_KM for _, coordinates in resolved[1:]):
+        # Structured display names usually put the broader locality last, as in "Mitte, Berlin".
+        return resolved[-1][0]
+    return None
 
 
+@lru_cache(maxsize=None)
 def _city_coordinates(city: str) -> tuple[float, float] | None:
     key = city.casefold()
     if key in _FALLBACK_CITIES:
@@ -68,6 +86,24 @@ def _city_coordinates(city: str) -> tuple[float, float] | None:
     if len(matches) != 1:
         return None
     return float(matches[0]["latitude"]), float(matches[0]["longitude"])
+
+
+def coordinates_from_metadata(metadata: dict) -> tuple[float, float] | None:
+    """Return valid canonical source coordinates, or None when they are absent or malformed."""
+    if not isinstance(metadata, dict):
+        return None
+    latitude, longitude = metadata.get("latitude"), metadata.get("longitude")
+    if latitude is None or longitude is None or isinstance(latitude, bool) or isinstance(longitude, bool):
+        return None
+    try:
+        coordinates = float(latitude), float(longitude)
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(value) for value in coordinates):
+        return None
+    if not -90 <= coordinates[0] <= 90 or not -180 <= coordinates[1] <= 180:
+        return None
+    return coordinates
 
 
 class EligibilityStatus(str, Enum):
@@ -139,17 +175,14 @@ def resolve_eligibility(metadata: dict, home_country: str | None) -> Eligibility
     return EligibilityResult(EligibilityStatus.RESTRICTED, _summarize(entries))
 
 
-def resolve_location(location: str | None, preferences: dict) -> LocationResult:
+def resolve_location(location: str | None, preferences: dict, coordinates: tuple[float, float] | None = None) -> LocationResult:
     city = extract_city(location)
     origin = str(preferences.get("origin", "")).strip()
     origin_coordinates = _city_coordinates(origin) if origin else None
-    coordinates = _city_coordinates(city) if city else None
-    if not origin_coordinates or not coordinates:
-        return LocationResult(LocationStatus.UNKNOWN, city=city, origin_resolved=origin_coordinates is not None, job_location_resolved=coordinates is not None)
-    lat1, lon1 = map(math.radians, origin_coordinates)
-    lat2, lon2 = map(math.radians, coordinates)
-    delta_lat, delta_lon = lat2 - lat1, lon2 - lon1
-    haversine = math.sin(delta_lat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(delta_lon / 2) ** 2
-    distance = 6371.0088 * 2 * math.asin(math.sqrt(haversine))
+    destination = coordinates_from_metadata({"latitude": coordinates[0], "longitude": coordinates[1]}) if coordinates else None
+    destination = destination or (_city_coordinates(city) if city else None)
+    if not origin_coordinates or not destination:
+        return LocationResult(LocationStatus.UNKNOWN, city=city, origin_resolved=origin_coordinates is not None, job_location_resolved=destination is not None)
+    distance = _distance_km(origin_coordinates, destination)
     status = LocationStatus.WITHIN_RADIUS if distance <= float(preferences["max_distance_km"]) else LocationStatus.OUTSIDE_RADIUS
     return LocationResult(status, city=city, distance_km=distance)

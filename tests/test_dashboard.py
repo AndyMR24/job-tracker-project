@@ -184,6 +184,13 @@ class ReadModelTests(DashboardFixture):
         self.assertNotIn("Werkstudent Data Science", titles)
         self.assertEqual(dashboard.filter_jobs(records, source=[]), [])
 
+    def test_default_view_keeps_an_unknown_location_visible_as_uncertain(self):
+        records = self.records()
+        unknown = next(record for record in records if record["title"] == "Junior Data Analyst")
+        unknown["location"] = "Germany"
+        unknown["excluded"] = False
+        self.assertIn("Junior Data Analyst", [record["title"] for record in dashboard.filter_jobs(records)])
+
     def test_unrecognized_status_keeps_job_status_matching(self):
         records = self.records()
         record = next(item for item in records if item["title"] == "Junior Data Analyst")

@@ -24,6 +24,12 @@ class LocationTests(unittest.TestCase):
     def test_common_city_formats_resolve_conservatively(self):
         self.assertEqual(extract_city("München, München (Kreis)"), "München")
         self.assertEqual(extract_city("Köln, Köln"), "Köln")
+        self.assertEqual(extract_city("Berlin, Deutschland"), "Berlin")
+        self.assertEqual(extract_city("Mitte, Berlin"), "Berlin")
+        self.assertEqual(extract_city("Hamburg-Altstadt, Hamburg"), "Hamburg")
+        self.assertEqual(extract_city("Maxvorstadt, München"), "München")
+        self.assertEqual(extract_city("Frankfurt am Main, Hessen"), "Frankfurt am Main")
+        self.assertEqual(extract_city("Springe, Deister"), "Springe")
         self.assertIsNone(extract_city("Germany"))
         self.assertIsNone(extract_city("München, Berlin"))
 
@@ -133,6 +139,35 @@ class RadiusFilteringTests(unittest.TestCase):
         self.assertFalse(evaluate(job, self.profile, self.config).excluded)
         refused = evaluate(job, self.profile, self.config_with(remote_only_beyond_distance=False))
         self.assertTrue(refused.excluded)
+
+    def test_exact_radius_boundary_is_inclusive_and_the_next_meter_is_outside(self):
+        distance = resolve_location("Berlin", self.config_with(max_distance_km=1000)["location_preferences"]).distance_km
+        at_boundary = resolve_location("Berlin", self.config_with(max_distance_km=distance)["location_preferences"])
+        beyond = resolve_location("Berlin", self.config_with(max_distance_km=distance - 0.001)["location_preferences"])
+        self.assertEqual(at_boundary.status, LocationStatus.WITHIN_RADIUS)
+        self.assertEqual(beyond.status, LocationStatus.OUTSIDE_RADIUS)
+
+    def test_valid_source_coordinates_resolve_an_unresolvable_location_text(self):
+        result = resolve_location(UNRESOLVABLE, self.config["location_preferences"], coordinates=(52.52, 13.405))
+        self.assertEqual(result.status, LocationStatus.OUTSIDE_RADIUS)
+        self.assertTrue(result.job_location_resolved)
+
+    def test_invalid_coordinates_fall_back_to_text_resolution(self):
+        preferences = self.config["location_preferences"]
+        for coordinates in ((999, 13.405), (52.52, -999), (float("nan"), 13.405), ("bad", 13.405)):
+            with self.subTest(coordinates=coordinates):
+                self.assertEqual(resolve_location("Aachen", preferences, coordinates=coordinates).status, LocationStatus.WITHIN_RADIUS)
+                self.assertEqual(resolve_location(UNRESOLVABLE, preferences, coordinates=coordinates).status, LocationStatus.UNKNOWN)
+
+    def test_valid_coordinates_drive_evaluation_and_unrelated_metadata_is_ignored(self):
+        outside = Job("Data Analyst", location="Remote listing", arrangement="hybrid", metadata={"latitude": 52.52, "longitude": 13.405})
+        self.assertTrue(evaluate(outside, self.profile, self.config).excluded)
+        remote = Job("Data Analyst", location="Remote listing", arrangement="remote", metadata={"latitude": 52.52, "longitude": 13.405})
+        self.assertFalse(evaluate(remote, self.profile, self.config).excluded)
+        unrelated = Job("Data Analyst", location="Aachen", arrangement="hybrid", metadata={"company_latitude": 52.52, "company_longitude": 13.405})
+        result = evaluate(unrelated, self.profile, self.config)
+        self.assertFalse(result.excluded)
+        self.assertIn(WITHIN_RADIUS_MESSAGE, result.strong_matches)
 
     def test_unresolvable_origin_is_reported_as_the_origin(self):
         result = evaluate(Job("Data Analyst", location="Aachen", arrangement="hybrid"), self.profile, self.config_with(origin=UNRESOLVABLE))

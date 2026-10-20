@@ -188,6 +188,10 @@ In `data/search_config.json`:
 - **evaluation** (optional) - overrides the scoring weights; see
   [Scoring weights, worked examples and limitations](#scoring-weights-worked-examples-and-limitations).
 
+The local configuration in this working copy currently uses **Aachen** as the origin and **100 km**
+as the maximum geographic distance. The public example remains a generic template, so its example
+values are not your active preferences.
+
 CV drafts are generated from `data/profile.json` together with the built-in LaTeX template in
 `templates/resume.tex`; no separate master CV file is needed or configured. If you also keep longer
 notes or a copy of a CV in your checkout, they are local only: `SOURCE_CV.pdf` and
@@ -415,8 +419,21 @@ come **before** the subcommand, for example
 | `job-agent application JOB_ID applied --date 2026-01-01` | Track an application you sent. |
 | `job-agent applications` / `job-agent history` | Review applications and the audit trail. |
 | `job-agent re-evaluate` | Refresh stored evaluations after changing profile or rules. |
+| `job-agent refresh-ba-locations` / `--apply` | Preview or apply location repairs for stored BA jobs using their references. |
 | `job-agent permission-check ACTION DESTINATION DATA --approve` | Record a one-time local approval for a future external action; it never transmits data and always refuses the `submit_application` action. |
 | `job-agent dashboard` | Serve the local web interface. |
+
+`refresh-ba-locations` is a dry run by default. It fetches only the BA detail records for stored BA
+jobs whose locations are missing, reports recovered locations and failures, and writes nothing until
+you rerun it with `--apply`. The apply step preserves decisions, viewed state, applications, CV
+versions and history, while re-evaluating jobs whose locations changed.
+
+After changing location rules or the radius, first run `job-agent re-evaluate` to apply them to every
+stored job. Then run `job-agent refresh-ba-locations` to preview missing BA locations and
+`job-agent refresh-ba-locations --apply` if the preview is satisfactory. Each successfully refreshed
+BA job is re-evaluated immediately, so a second global `re-evaluate` is not required when the same
+profile and configuration remain active. Run `re-evaluate` again only after another rule,
+configuration or source-location change.
 
 When `job-agent application ... applied` omits `--date`, today's local date is stored. Explicit and
 previously stored application dates are preserved when later updates omit the date.
@@ -523,6 +540,14 @@ the radius is not applied, and a hybrid or onsite job receives no within-radius 
 spelling of `location_preferences.origin` and run `job-agent re-evaluate` afterwards. A job location
 that cannot be resolved is reported separately, so the two causes are never confused, and in neither
 case is a job excluded on distance.
+
+The resolver understands common structured display forms such as `Berlin, Deutschland`,
+`Mitte, Berlin`, `Hamburg-Altstadt, Hamburg`, and `Maxvorstadt, München`. It accepts a city only when
+offline locality data identifies it unambiguously; conflicting strings such as `München, Berlin`, as
+well as country-only or region-only values, stay unknown. Valid BA source coordinates are preferred
+for distance calculation, with the city text used as a fallback. Invalid or incomplete coordinates
+are ignored. Unknown locations remain visible as uncertainties under the current policy and are not
+treated as nearby.
 
 Because unverified requirements do not reduce the score, a job can be `recommended` while still
 listing requirements the profile could not confirm. Review those uncertainties manually before you

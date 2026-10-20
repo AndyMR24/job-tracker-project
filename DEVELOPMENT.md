@@ -199,6 +199,11 @@ Confirmed design choices:
   `origin_resolved` and `job_location_resolved`, so `evaluate` names the configured origin when it
   is the problem instead of blaming a job city that resolved, never awards the within-radius bonus
   for an unestablished distance, and never excludes on distance it could not compute.
+  `extract_city` examines known locality components in comma-separated source display names, accepts
+  a single resolved locality, and accepts multiple nearby components as a district-and-city pair.
+  Distant conflicts remain unresolved. Canonical `metadata.latitude` and `metadata.longitude` values
+  are range-checked and preferred for the distance calculation; malformed or absent coordinates fall
+  back to text resolution. The comparison remains `distance <= max_distance_km`.
 
 ## Public sources and search orchestration
 
@@ -239,6 +244,17 @@ Source field behaviour, observed against live responses on 2026-09-23 and relied
   `allianzpartnerUrl` (a bare partner/employer domain) or arbitrary description links, and it does
   not construct a canonical arbeitsagentur.de URL. If no direct vacancy link exists, the detail page
   reports that explicitly.
+- BA locations may arrive as `stellenlokationen[].adresse` with `plz`, `ort`, `region` and `land`,
+  optionally alongside `breite`/`laenge`. The adapter uses `ort` as the canonical city for distance
+  resolution and preserves the postal code, street, region, country and coordinates in metadata.
+  Evaluation uses those coordinates when valid, even if the textual city cannot be resolved.
+  `refresh-ba-locations` is dry-run by default and `--apply` fetches stored BA references directly
+  rather than relying on search results. It only attempts records whose `location` is empty and does
+  not overwrite a present one. `re-evaluate` applies current city, coordinate and radius logic to
+  every stored job but does not refetch BA data. After changing location rules or configuration, run
+  `re-evaluate` first, then preview and apply the BA refresh for remaining empty locations. The apply
+  step re-evaluates each successfully refreshed BA job, so no second global pass is required while
+  profile and configuration stay unchanged.
 - Adzuna typically returns description snippets; listings flagged with
   `metadata.description_is_snippet` lose points and carry an explicit uncertainty.
 
@@ -344,7 +360,8 @@ test contacts a source.
 - Himalayas salary fields are published but unread, and the BA API offers no canonical posting URL,
   so some listings keep an unknown `source_url`; the BA adapter fetches five listings per query.
 - The built-in fallback coordinate dictionary covers only a few cities; for other cities
-  `geonamescache` is reloaded per job, which slows searches and `job-agent re-evaluate`.
+  `geonamescache` data is loaded per unique city lookup, which slows searches and
+  `job-agent re-evaluate`.
 - The dashboard history page shows the 200 newest audit events, and search progress uses polling.
 - There are no CLI helpers for creating or editing the JSON profile and configuration by hand.
 - Test gaps include malformed responses for the Nomado24, Himalayas and BA adapters; the `ingest`

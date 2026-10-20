@@ -11,7 +11,7 @@ from .adzuna import AdzunaError
 from .ba import BAError
 from .cv import generate
 from .discovery import collect, default_sources, store_jobs
-from .maintenance import refresh_evaluations
+from .maintenance import refresh_ba_locations, refresh_evaluations
 from .permissions import require_external_approval
 from .profile import ValidationError, load_config, load_profile
 from .storage import Store
@@ -69,6 +69,8 @@ def main(argv=None):
     permission.add_argument("action"); permission.add_argument("destination"); permission.add_argument("data_summary"); permission.add_argument("--approve", action="store_true")
     tailor = subs.add_parser("tailor"); tailor.add_argument("job_id", type=int); tailor.add_argument("--output")
     subs.add_parser("re-evaluate", help="Re-run the current evaluator over stored jobs; no search is performed")
+    ba_refresh = subs.add_parser("refresh-ba-locations", help="Refresh missing BA locations from stored references; dry-run by default")
+    ba_refresh.add_argument("--apply", action="store_true", help="Write successful BA location refreshes")
     dash = subs.add_parser("dashboard", help="Serve the localhost web dashboard for the same local data"); dash.add_argument("--host", default="127.0.0.1"); dash.add_argument("--port", type=int, default=8770)
     args = parser.parse_args(argv)
     store = None
@@ -113,6 +115,18 @@ def main(argv=None):
             print(f"Newly excluded: {summary['newly_excluded']} | Score or category changed: {summary['score_changed']}")
             for source, item in sorted(summary["sources"].items(), key=lambda pair: (-pair[1]["examined"], pair[0])):
                 print(f"  {source}: {item['examined']} examined, {item['changed']} updated, {item['newly_excluded']} newly excluded")
+        elif args.command == "refresh-ba-locations":
+            summary = refresh_ba_locations(store, profile, config, apply=args.apply)
+            mode = "updated" if args.apply else "would update"
+            changed = summary["updated"] if args.apply else summary["would_update"]
+            print(f"BA location refresh: {summary['examined']} missing-location job(s), {summary['locations_recovered']} location(s) recovered, {changed} {mode}.")
+            print(f"Already located: {summary['already_located']} | Score/category changed: {summary['score_changed']} | Newly excluded: {summary['newly_excluded']}")
+            for item in summary["failed"]:
+                print(f"FAILED job {item['job_id']} ({item['reference']}): {item['error']}")
+            for item in summary["unresolved"]:
+                print(f"UNRESOLVED job {item['job_id']} ({item['reference']}): detailed BA response had no location")
+            if not args.apply:
+                print("Dry run only; pass --apply to write successful refreshes.")
         elif args.command == "list":
             for row in store.list_jobs(args.include_rejected): print(f"{row['id']:>3}  {json.loads(row['evaluation'])['score']:>3}/100  {row['status']:<18} {json.loads(row['payload'])['title']}")
         elif args.command == "view":

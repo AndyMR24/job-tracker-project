@@ -53,8 +53,9 @@ class BASource:
 
 
 def _map(item: dict, detail: dict) -> dict:
-    locations = item.get("stellenlokationen") or detail.get("arbeitsorte") or []
+    locations = detail.get("stellenlokationen") or detail.get("arbeitsorte") or item.get("stellenlokationen") or []
     location = _location(locations)
+    location_metadata = _location_metadata(locations)
     title = detail.get("stellenangebotsTitel") or item.get("stellenangebotsTitel")
     description = detail.get("stellenangebotsBeschreibung") or detail.get("stellenbeschreibung")
     ref = item.get("referenznummer") or item.get("refnr") or detail.get("referenznummer")
@@ -70,7 +71,7 @@ def _map(item: dict, detail: dict) -> dict:
             parsed = urllib.parse.urlsplit(candidate)
             if parsed.scheme in {"http", "https"} and parsed.netloc:
                 external_url = candidate
-    return {"title": title, "company": item.get("firma") or detail.get("arbeitgeber"), "location": location, "description": description, "employment_type": detail.get("angebotsart") or item.get("angebotsart"), "arrangement": "unknown", "source": "ba", "source_url": external_url, "external_job_id": str(ref) if ref else None, "metadata": {"homeoffice_possible": item.get("homeofficemoeglich"), "homeoffice_type": item.get("homeofficetyp"), "homeoffice_percent": item.get("homeofficeprozent"), "published_at": item.get("datumErsteVeroeffentlichung"), "modified_at": item.get("aenderungsdatum"), "distance": item.get("entfernung"), "beruf": item.get("hauptberuf"), "alternative_jobs": [item.get("alternativBeruf1"), item.get("alternativBeruf2")], "all_jobs": item.get("alleBerufe")}}
+    return {"title": title, "company": item.get("firma") or detail.get("arbeitgeber"), "location": location, "description": description, "employment_type": detail.get("angebotsart") or item.get("angebotsart"), "arrangement": "unknown", "source": "ba", "source_url": external_url, "external_job_id": str(ref) if ref else None, "metadata": {"homeoffice_possible": item.get("homeofficemoeglich"), "homeoffice_type": item.get("homeofficetyp"), "homeoffice_percent": item.get("homeofficeprozent"), "published_at": item.get("datumErsteVeroeffentlichung"), "modified_at": item.get("aenderungsdatum"), "distance": item.get("entfernung"), "beruf": item.get("hauptberuf"), "alternative_jobs": [item.get("alternativBeruf1"), item.get("alternativBeruf2")], "all_jobs": item.get("alleBerufe"), **location_metadata}}
 
 
 def _location(locations: object) -> str | None:
@@ -80,5 +81,27 @@ def _location(locations: object) -> str | None:
         return None
     first = locations[0]
     if not isinstance(first, dict):
-        return str(first)
+        return str(first).strip() or None
+    address = first.get("adresse")
+    address = address if isinstance(address, dict) else first
+    city = address.get("ort") or first.get("ort")
+    return str(city).strip() if city else None
+
+
+def _location_metadata(locations: object) -> dict:
+    if isinstance(locations, dict):
+        locations = [locations]
+    if not isinstance(locations, list) or not locations or not isinstance(locations[0], dict):
+        return {"postal_code": None, "street": None, "region": None, "country": None, "latitude": None, "longitude": None}
+    first = locations[0]
+    address = first.get("adresse")
+    address = address if isinstance(address, dict) else first
+    return {
+        "postal_code": address.get("plz") or first.get("plz"),
+        "street": address.get("strasse") or first.get("strasse"),
+        "region": address.get("region") or first.get("region"),
+        "country": address.get("land") or first.get("land"),
+        "latitude": first.get("breite") or first.get("latitude"),
+        "longitude": first.get("laenge") or first.get("longitude"),
+    }
     return ", ".join(str(first[key]) for key in ("ort", "region", "land") if first.get(key)) or None

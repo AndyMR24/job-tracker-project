@@ -122,8 +122,14 @@ the configurable `evaluation` weights and the limitations in full.
 | `job-agent application JOB_ID applied --date 2026-01-01` | track an application you sent |
 | `job-agent applications` / `job-agent history` | review applications and the audit trail |
 | `job-agent re-evaluate` | refresh stored evaluations after changing profile or rules |
+| `job-agent refresh-ba-locations` / `--apply` | preview or apply location repairs for stored BA jobs using their references |
 | `job-agent permission-check ACTION DESTINATION DATA --approve` | record a one-time local approval for a future external action; it never transmits data and always refuses the `submit_application` action |
 | `job-agent dashboard` | serve the local web interface |
+
+`refresh-ba-locations` is a dry run by default. Add `--apply` only after reviewing
+the recovered-location and failure summary. Run `job-agent re-evaluate` first after changing
+location rules or the configured radius. The apply step re-evaluates each refreshed BA job, so a
+second global re-evaluation is not needed when the profile and configuration remain unchanged.
 
 ## Usage - dashboard
 

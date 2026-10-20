@@ -5,7 +5,7 @@ import re
 from dataclasses import asdict, dataclass
 
 from .models import Job
-from .location import EligibilityStatus, LocationStatus, resolve_eligibility, resolve_location
+from .location import EligibilityStatus, LocationStatus, coordinates_from_metadata, resolve_eligibility, resolve_location
 from .profile import DEGREE_LABELS, Profile, degree_meets
 
 
@@ -195,11 +195,12 @@ def evaluate(job: Job, profile: Profile, config: dict) -> Evaluation:
     elif not job.requirements:
         score -= weights["no_requirements"]
         unknown.append("The listing does not expose explicit requirements; technical qualifications could not be fully verified.")
-    geographic = resolve_location(job.location, config["location_preferences"])
+    geographic = resolve_location(job.location, config["location_preferences"], coordinates_from_metadata(job.metadata))
     if geographic.status == LocationStatus.OUTSIDE_RADIUS:
         if not (job.arrangement == "remote" and config["location_preferences"]["remote_only_beyond_distance"]):
             excluded = True
-            concerns.append(f"Resolved city {geographic.city} is outside the configured geographic radius.")
+            location_label = geographic.city or job.location or "source coordinates"
+            concerns.append(f"Resolved city {location_label} is outside the configured geographic radius.")
         else:
             matches.append("Explicitly remote job is allowed beyond the configured geographic radius.")
     elif geographic.status == LocationStatus.UNKNOWN:
