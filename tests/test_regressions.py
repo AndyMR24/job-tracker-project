@@ -1,5 +1,4 @@
 import json
-import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,9 +13,9 @@ from job_agent.storage import Store
 
 
 try:  # works for "python -m unittest discover -s tests" and for pytest
-    from support import write_config, write_profile  # noqa: F401
+    from support import fake_pdflatex, write_config, write_profile  # noqa: F401
 except ImportError:  # pragma: no cover - when the tests directory is imported as a package
-    from tests.support import write_config, write_profile  # noqa: F401
+    from tests.support import fake_pdflatex, write_config, write_profile  # noqa: F401
 
 
 class RegressionTests(unittest.TestCase):
@@ -147,16 +146,15 @@ class RegressionTests(unittest.TestCase):
         with patch("job_agent.search.urlopen", return_value=empty()):
             self.assertEqual(public_search("test"), [])
 
-    @unittest.skipUnless(shutil.which("pdflatex"), "pdflatex is not installed in this test environment")
     def test_cv_heading_reflects_requirement_match(self):
         with tempfile.TemporaryDirectory() as directory:
             matched = Path(directory) / "matched.pdf"
             unmatched = Path(directory) / "unmatched.pdf"
-            generate(Job("Python Developer", requirements=[Requirement("Python")]), self.profile, matched)
-            generate(Job("Business Analyst", requirements=[Requirement("Excel")]), self.profile, unmatched)
-            from pypdf import PdfReader
-            matched_text = "\n".join(page.extract_text() or "" for page in PdfReader(str(matched)).pages)
-            unmatched_text = "\n".join(page.extract_text() or "" for page in PdfReader(str(unmatched)).pages)
+            with patch("job_agent.cv.shutil.which", return_value="pdflatex"), patch("job_agent.cv.subprocess.run", side_effect=fake_pdflatex):
+                generate(Job("Python Developer", requirements=[Requirement("Python")]), self.profile, matched)
+                generate(Job("Business Analyst", requirements=[Requirement("Excel")]), self.profile, unmatched)
+            matched_text = matched.with_suffix(".tex").read_text(encoding="utf-8")
+            unmatched_text = unmatched.with_suffix(".tex").read_text(encoding="utf-8")
             self.assertIn("Relevant projects", matched_text)
             self.assertIn("Projects", unmatched_text)
             self.assertNotIn("Relevant projects", unmatched_text)

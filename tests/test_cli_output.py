@@ -28,7 +28,7 @@ def fill(database: Path, count: int = 4000) -> None:
     connection = sqlite3.connect(database)
     payload = json.dumps({"title": EMOJI_TITLE, "source": "adzuna", "requirements": [], "metadata": {}})
     evaluation = json.dumps({"score": 60, "assessment": "borderline", "excluded": False})
-    connection.executemany("INSERT INTO jobs(source_url,external_job_id,payload,discovered_at,last_seen_at,viewed,status,rejection_reason) VALUES (?,?,?,?,?,?,?,?)", [(None, f"id-{index}", payload, "2026-01-01", "2026-01-01", 0, "discovered", None) for index in range(count)])
+    connection.executemany("INSERT INTO jobs(source,source_url,external_job_id,payload,discovered_at,last_seen_at,viewed,status,rejection_reason) VALUES (?,?,?,?,?,?,?,?,?)", [("adzuna", None, f"id-{index}", payload, "2026-01-01", "2026-01-01", 0, "discovered", None) for index in range(count)])
     connection.executemany("INSERT INTO evaluations(job_id,payload,created_at) VALUES (?,?,?)", [(index + 1, evaluation, "2026-01-01") for index in range(count)])
     connection.commit()
     connection.close()

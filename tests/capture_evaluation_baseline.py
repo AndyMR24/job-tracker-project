@@ -23,21 +23,30 @@ except ImportError:  # pragma: no cover - when the tests directory is imported a
     from tests.support import evaluation_cases, sample_config, sample_profile
 
 OUTPUT = Path(__file__).with_name("evaluation_baseline.json")
+DEFAULT_NOTE = "Golden evaluation output captured from the implementation before the configurable evaluation weights were added."
 
 
-def main() -> None:
+def build_document(existing: dict | None = None) -> dict:
     profile, config = Profile(sample_profile()), sample_config()
     cases = [
         {"case": case["case"], "evaluation": evaluate(normalize(dict(case["job"])), profile, config).to_dict()}
         for case in evaluation_cases()
     ]
     document = {
-        "_note": "Golden evaluation output captured from the implementation before the configurable evaluation weights were added.",
+        "_note": DEFAULT_NOTE,
         "_fixtures": "tests/support.py:evaluation_cases",
-        "cases": cases,
     }
+    if isinstance(existing, dict):
+        document.update({key: value for key, value in existing.items() if key != "cases"})
+    document["cases"] = cases
+    return document
+
+
+def main() -> None:
+    existing = json.loads(OUTPUT.read_text(encoding="utf-8")) if OUTPUT.exists() else None
+    document = build_document(existing)
     OUTPUT.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
-    print(f"Wrote {OUTPUT} with {len(cases)} cases")
+    print(f"Wrote {OUTPUT} with {len(document['cases'])} cases")
 
 
 if __name__ == "__main__":

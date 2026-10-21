@@ -49,11 +49,30 @@ class LocationTests(unittest.TestCase):
         self.assertEqual(resolve_eligibility({"location_restrictions": []}, "Germany").status, EligibilityStatus.ALLOWED)
         self.assertEqual(resolve_eligibility({"location_restrictions": ["Germany", "Austria"]}, "Germany").status, EligibilityStatus.ALLOWED)
         self.assertEqual(resolve_eligibility({"location_restrictions": ["Europe"]}, "Germany").status, EligibilityStatus.ALLOWED)
+        self.assertEqual(resolve_eligibility({"location_restrictions": ["France"]}, "Germany").status, EligibilityStatus.RESTRICTED)
+        self.assertEqual(resolve_eligibility({"location_restrictions": ["France", "Germany"]}, "Germany").status, EligibilityStatus.ALLOWED)
         self.assertEqual(resolve_eligibility({"location_restrictions": ["United States", "Canada"]}, "Germany").status, EligibilityStatus.RESTRICTED)
         self.assertEqual(resolve_eligibility({"location_restrictions": ["United States", "Canada"]}, "Germany").detail, "United States, Canada")
         self.assertEqual(resolve_eligibility({}, "Germany").status, EligibilityStatus.UNKNOWN)
         self.assertEqual(resolve_eligibility({"location_restrictions": ["United States"]}, None).status, EligibilityStatus.UNKNOWN)
         self.assertEqual(resolve_eligibility({"location_restrictions": ["United States"]}, "").status, EligibilityStatus.UNKNOWN)
+
+    def test_malformed_or_ambiguous_eligibility_is_unknown(self):
+        malformed = (
+            {"location_restrictions": None},
+            {"location_restrictions": "France"},
+            {"location_restrictions": {"country": "France"}},
+            {"location_restrictions": [["France"]]},
+            {"location_restrictions": [""]},
+            {"location_restrictions": ["France", None]},
+            {"location_restrictions": ["France or Germany"]},
+            {"location_restrictions": ["France", "Atlantis"]},
+            {"location_restrictions": ["Germany", "Atlantis"]},
+            {"location_restrictions": ["Europe excluding Germany"]},
+        )
+        for metadata in malformed:
+            with self.subTest(metadata=metadata):
+                self.assertEqual(resolve_eligibility(metadata, "Germany").status, EligibilityStatus.UNKNOWN)
 
     def test_missing_or_unresolved_location_is_unknown(self):
         preferences = self.config["location_preferences"]
@@ -200,6 +219,41 @@ class RadiusFilteringTests(unittest.TestCase):
         self.assertFalse(result.excluded)
         self.assertIn("Germany-wide remote work is enabled in the configuration.", result.strong_matches)
         self.assertTrue(any(ORIGIN_MESSAGE in item for item in result.uncertainties))
+
+    def test_remote_job_with_unknown_country_eligibility_is_included_with_uncertainty(self):
+        job = Job("Data Analyst", location="Paris", arrangement="remote", metadata={"company_country": "France"})
+        first = evaluate(job, self.profile, self.config)
+        second = evaluate(job, self.profile, self.config)
+        message = "Remote country eligibility is not stated or could not be interpreted; verify where you may work from."
+        self.assertFalse(first.excluded)
+        self.assertEqual(first.uncertainties.count(message), 1)
+        self.assertEqual(second.uncertainties.count(message), 1)
+        self.assertFalse(any("restricted to" in concern for concern in first.concerns))
+
+    def test_explicit_remote_country_eligibility_remains_decisive(self):
+        restricted = evaluate(
+            Job("Data Analyst", location="Paris", arrangement="remote", metadata={"location_restrictions": ["France"]}),
+            self.profile,
+            self.config,
+        )
+        allowed = evaluate(
+            Job("Data Analyst", location="Paris", arrangement="remote", metadata={"location_restrictions": ["Germany"]}),
+            self.profile,
+            self.config,
+        )
+        self.assertTrue(restricted.excluded)
+        self.assertTrue(any("restricted to France" in concern for concern in restricted.concerns))
+        self.assertFalse(allowed.excluded)
+        self.assertFalse(any("restricted to" in concern for concern in allowed.concerns))
+
+    def test_incidental_country_mention_does_not_create_an_eligibility_restriction(self):
+        result = evaluate(
+            Job("Data Analyst", description="Our France office supports this Germany-wide remote role.", arrangement="remote"),
+            self.profile,
+            self.config,
+        )
+        self.assertFalse(result.excluded)
+        self.assertTrue(any("Remote country eligibility" in item for item in result.uncertainties))
 
 
 if __name__ == "__main__":

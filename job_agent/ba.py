@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import base64
+import http.client
 import json
 import re
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -20,6 +22,7 @@ class BASource:
     detail_endpoint = "https://rest.arbeitsagentur.de/jobboerse/jobsuche-service/pc/v4/jobdetails/{}"
 
     def search(self, query: str, location: str | None = None, page: int = 1, size: int = 5) -> list[dict]:
+        self.partial_errors: list[str] = []
         params = {"was": query, "page": page, "size": min(size, 10), "angebotsart": 1}
         if location:
             params["wo"] = location
@@ -27,12 +30,29 @@ class BASource:
         items = payload.get("ergebnisliste", []) if isinstance(payload, dict) else []
         if isinstance(items, dict):
             items = items.get("stellenangebote", [])
+        if not isinstance(items, list):
+            raise BAError("BA Jobsuche returned an unexpected search-results shape.")
         jobs = []
-        for item in items if isinstance(items, list) else []:
-            if not isinstance(item, dict) or not item.get("stellenangebotsTitel"):
+        for index, item in enumerate(items, start=1):
+            title = item.get("stellenangebotsTitel") if isinstance(item, dict) else None
+            if not isinstance(title, str) or not title.strip():
+                self.partial_errors.append(f"search result {index} skipped: missing job title")
                 continue
             ref = item.get("referenznummer") or item.get("refnr")
-            detail = self.detail(ref) if ref else {}
+            ref = str(ref).strip() if ref is not None and str(ref).strip() else None
+            if ref:
+                try:
+                    detail = self.detail(ref)
+                except BAError as exc:
+                    self.partial_errors.append(
+                        f"detail for reference {ref} failed ({exc}); retained available search-result data"
+                    )
+                    detail = {}
+            else:
+                detail = {}
+                self.partial_errors.append(
+                    f"search result {index} has no reference; retained available search-result data"
+                )
             jobs.append(_map(item, detail))
         return jobs
 
@@ -44,9 +64,13 @@ class BASource:
         request = urllib.request.Request(url, headers={"Accept": "application/json", "X-API-Key": "jobboerse-jobsuche", "User-Agent": "job-searching-agent/0.1"})
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
-                payload = json.loads(response.read().decode("utf-8", "replace"))
-        except Exception as exc:
+                raw = response.read()
+        except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException) as exc:
             raise BAError("BA Jobsuche request could not be completed.") from exc
+        try:
+            payload = json.loads(raw.decode("utf-8", "replace"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise BAError("BA Jobsuche returned non-JSON data.") from exc
         if not isinstance(payload, dict):
             raise BAError("BA Jobsuche returned an unexpected response shape.")
         return payload
@@ -56,7 +80,8 @@ def _map(item: dict, detail: dict) -> dict:
     locations = detail.get("stellenlokationen") or detail.get("arbeitsorte") or item.get("stellenlokationen") or []
     location = _location(locations)
     location_metadata = _location_metadata(locations)
-    title = detail.get("stellenangebotsTitel") or item.get("stellenangebotsTitel")
+    detail_title = detail.get("stellenangebotsTitel")
+    title = detail_title.strip() if isinstance(detail_title, str) and detail_title.strip() else item.get("stellenangebotsTitel")
     description = detail.get("stellenangebotsBeschreibung") or detail.get("stellenbeschreibung")
     ref = item.get("referenznummer") or item.get("refnr") or detail.get("referenznummer")
     # The Jobsuche search and detail responses may expose the employer application link as

@@ -30,13 +30,20 @@ class HimalayasSource:
             if not isinstance(item, dict) or not item.get("title"):
                 continue
             remote = item.get("remote") is True or item.get("isRemote") is True
-            restrictions = item.get("locationRestrictions") or []
+            has_restrictions = "locationRestrictions" in item
+            restrictions = item.get("locationRestrictions")
 
             seniority = item.get("seniority", "unknown")
             if isinstance(seniority, list):
                 seniority = ", ".join(str(value) for value in seniority)
 
-            jobs.append({"title": item["title"], "company": _company(item), "location": _location(item), "arrangement": "remote" if remote else "unknown", "description": item.get("description"), "salary": _salary(item), "employment_type": item.get("employmentType"), "seniority": seniority, "source": "himalayas", "source_url": item.get("applicationLink") or item.get("url"), "external_job_id": str(item.get("guid") or item.get("id") or item.get("url")) if (item.get("guid") or item.get("id") or item.get("url")) else None, "metadata": {"location_restrictions": restrictions, "timezone_restrictions": item.get("timezoneRestrictions"), "categories": item.get("categories"), "published_at": item.get("publishedAt"), "expires_at": item.get("expiresAt"), "worldwide": not restrictions}})
+            metadata = {"timezone_restrictions": item.get("timezoneRestrictions"), "categories": item.get("categories"), "published_at": item.get("publishedAt"), "expires_at": item.get("expiresAt")}
+            if has_restrictions:
+                metadata["location_restrictions"] = restrictions
+                metadata["worldwide"] = restrictions == []
+            else:
+                metadata["worldwide"] = None
+            jobs.append({"title": item["title"], "company": _company(item), "location": _location(item), "arrangement": "remote" if remote else "unknown", "description": item.get("description"), "salary": _salary(item), "employment_type": item.get("employmentType"), "seniority": seniority, "source": "himalayas", "source_url": item.get("applicationLink") or item.get("url"), "external_job_id": str(item.get("guid") or item.get("id") or item.get("url")) if (item.get("guid") or item.get("id") or item.get("url")) else None, "metadata": metadata})
 
         return jobs
 

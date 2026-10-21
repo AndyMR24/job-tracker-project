@@ -223,6 +223,8 @@ def evaluate(job: Job, profile: Profile, config: dict) -> Evaluation:
         concerns.append(f"The posting is restricted to {eligibility.detail}; the profile records residence in {profile.country_of_residence}.")
     elif eligibility.status is EligibilityStatus.ALLOWED and eligibility.detail != "worldwide":
         matches.append(f"The published restriction list explicitly allows {profile.country_of_residence}.")
+    elif eligibility.status is EligibilityStatus.UNKNOWN and job.arrangement == "remote":
+        unknown.append("Remote country eligibility is not stated or could not be interpreted; verify where you may work from.")
     body = " ".join(filter(None, [job.description, job.qualifications])).lower()
     sponsorship_terms = ("must be authorized to work", "no sponsorship", "visa sponsorship", "requires sponsorship", "sponsorship is unavailable", "sponsorship unavailable")
     if any(term in body for term in sponsorship_terms):

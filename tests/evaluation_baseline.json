@@ -1,5 +1,5 @@
 {
-  "_note": "Golden evaluation output of the shipped evaluator: captured before the configurable evaluation weights were added and updated deliberately when an unlisted requirement stopped receiving the missing_requirement penalty (the 'missing mandatory requirement' and 'missing preferred requirement' cases).",
+  "_note": "Golden evaluation output of the shipped evaluator. It was updated deliberately when unlisted requirements stopped receiving the missing_requirement penalty and when remote country-eligibility uncertainty was added.",
   "_fixtures": "tests/support.py:evaluation_cases",
   "cases": [
     {
@@ -236,7 +236,8 @@
         "uncertainties": [
           "Seniority is not stated clearly.",
           "The listing does not expose explicit requirements; technical qualifications could not be fully verified.",
-          "Job city could not be resolved for geographic-radius evaluation."
+          "Job city could not be resolved for geographic-radius evaluation.",
+          "Remote country eligibility is not stated or could not be interpreted; verify where you may work from."
         ]
       }
     },

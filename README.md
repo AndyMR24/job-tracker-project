@@ -24,7 +24,8 @@ covers installation on Windows, the first configuration, day-to-day use and how 
 - **Application tracking** - record your own applications and their status; the tool only records
   what you did.
 - **CV drafts** - generate a LaTeX/PDF draft tailored to one job, assembled only from facts in your
-  profile. It reorders, re-words and shortens; it never invents experience, skills or qualifications.
+  profile. It selects a small set of relevant projects, reorders, re-words and shortens; it never
+  invents experience, skills or qualifications.
 - **Two interfaces** - a CLI and a local browser dashboard over the same SQLite database, the same
   evaluator and the same rules.
 
@@ -174,7 +175,8 @@ python -m unittest discover -s tests
 GitHub Actions runs the same suite on Python 3.11 and 3.12. The tests use synthetic fixtures and
 temporary databases, so they need no personal data, credentials or network access.
 [DEVELOPMENT.md](DEVELOPMENT.md) describes the test strategy, including which tests need a working
-`pdflatex` and why a local Windows run can differ from CI.
+`pdflatex` and why a local Windows run can differ from CI. The normal unit suite does not require
+LaTeX; a separate real-PDF integration test runs only when `pdflatex --version` succeeds.
 
 ## Project documents
 
@@ -185,6 +187,6 @@ temporary databases, so they need no personal data, credentials or network acces
 
 ## Status
 
-An MVP, deliberately small: one evaluator, four public sources, exact URL/job-ID duplicate
-prevention, no browser automation and no automatic applications. It is available under the MIT
+An MVP, deliberately small: one evaluator, four public sources, source-scoped exact job identity,
+no browser automation and no automatic applications. It is available under the MIT
 license; see `LICENSE`.

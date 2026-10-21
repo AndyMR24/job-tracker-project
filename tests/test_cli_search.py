@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from job_agent.cli import main
 from job_agent.adzuna import AdzunaError
+from job_agent.discovery import collect
 
 try:  # works for "python -m unittest discover -s tests" and for pytest
     from support import write_profile
@@ -26,6 +27,32 @@ class CliSearchTests(unittest.TestCase):
         self.config.write_text(json.dumps({"target_roles": ["Python Developer"], "locations": ["Aachen"], "work_arrangements": ["remote"], "location_preferences": {"origin": "Aachen", "max_distance_km": 225, "remote_only_beyond_distance": True}, "search_queries": {"primary": ["Primary A", "Primary B"], "secondary": ["Secondary A"]}}), encoding="utf-8")
         self.database = root / "jobs.sqlite"
         self.stores = []
+
+    def test_collect_reports_adapter_partial_errors_without_dropping_results(self):
+        class PartialSource:
+            partial_errors = ["detail for reference x failed; retained available search-result data"]
+
+            def search(self, query, location=None):
+                return [{"title": "Kept", "source": "ba", "external_job_id": "1"}]
+
+        outcome = collect({"ba": (PartialSource(), True)}, query="Data Analyst", source=["ba"])
+        self.assertEqual([job["title"] for job in outcome.jobs], ["Kept"])
+        self.assertEqual(len(outcome.errors), 1)
+        self.assertIn("retained available search-result data", outcome.errors[0])
+
+    def test_cli_reports_partial_source_errors_while_completing(self):
+        class PartialSource:
+            partial_errors = ["detail for reference x failed; retained available search-result data"]
+
+            def search(self, query, location=None):
+                return [{"title": "Kept", "source": "ba", "external_job_id": "1"}]
+
+        output, errors = StringIO(), StringIO()
+        sources = {"ba": (PartialSource(), True)}
+        with patch("job_agent.cli.default_sources", return_value=sources), patch("job_agent.cli.Store", side_effect=self.store), redirect_stdout(output), redirect_stderr(errors):
+            main(self.args("Data Analyst", "--source", "ba"))
+        self.assertIn("WARNING: ba (Data Analyst): detail", errors.getvalue())
+        self.assertIn("Search complete", output.getvalue())
 
     def tearDown(self):
         self.directory.cleanup()

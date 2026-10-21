@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .adzuna import AdzunaError
 from .ba import BAError
-from .cv import generate
+from .cv import generate, versioned_output_path
 from .discovery import collect, default_sources, store_jobs
 from .maintenance import refresh_ba_locations, refresh_evaluations
 from .permissions import require_external_approval
@@ -44,7 +44,7 @@ def _closed_pipe(exc: OSError) -> bool:
     return isinstance(exc, BrokenPipeError)
 
 
-def paths(args): return load_profile(args.profile), load_config(args.config), Store(args.database)
+def paths(args): return load_profile(args.profile), load_config(args.config)
 def print_evaluation(e):
     print(f"Fit: {e['score']}/100 - {e['assessment']} (a profile/preference match, not hiring probability)")
     for label, key in (("Strong matches", "strong_matches"), ("Potential gaps", "potential_gaps"), ("Important concerns", "concerns"), ("Uncertainties", "uncertainties")):
@@ -79,10 +79,11 @@ def main(argv=None):
             from .webapp import serve
             serve(host=args.host, port=args.port, profile=args.profile, config=args.config, database=args.database)
             return
-        profile, config, store = paths(args)
+        profile, config = paths(args)
         if args.command == "validate":
             print("Profile and configuration are valid.")
             return
+        store = Store(args.database)
         if args.command in {"ingest", "search"}:
             search_count = new_count = known_count = excluded_count = 0
             if args.command == "ingest": raw_jobs = json.loads(Path(args.file).read_text(encoding="utf-8"))
@@ -92,6 +93,7 @@ def main(argv=None):
                 queries = None if manual_query else config["search_queries"]["primary"] + config["search_queries"]["secondary"]
                 outcome = collect(default_sources(ROOT), queries=queries, query=manual_query, source=args.source, location=args.location)
                 for note in outcome.skipped: print(note)
+                for warning in outcome.errors: print(f"WARNING: {warning}", file=sys.stderr)
                 if outcome.skipped and not outcome.queries_run:
                     store.audit("search_completed", details="no source was searched")
                     return
@@ -141,7 +143,7 @@ def main(argv=None):
             approval = require_external_approval(action=args.action, destination=args.destination, data_summary=args.data_summary, approved=args.approve)
             store.audit("external_action_approved", details=json.dumps(approval)); print("Specific approval recorded locally. No data was transmitted.")
         elif args.command == "tailor":
-            job, _, _ = store.get_job(args.job_id); output = args.output or str(ROOT / "output" / f"cv_job_{args.job_id}.pdf"); path, facts = generate(job, profile, output); store.save_cv(args.job_id, str(path), facts); print(f"Local truthful CV draft created: {path}")
+            job, _, _ = store.get_job(args.job_id); output = args.output or str(versioned_output_path(ROOT / "output", args.job_id)); path, facts = generate(job, profile, output); store.save_cv(args.job_id, str(path), facts); print(f"Local truthful CV draft created: {path}")
     except (AdzunaError, Nomado24Error, HimalayasError, BAError) as exc:
         parser.error(str(exc))
     except (ValidationError, ValueError, KeyError, json.JSONDecodeError) as exc:

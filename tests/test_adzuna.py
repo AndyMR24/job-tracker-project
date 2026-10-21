@@ -54,6 +54,7 @@ class AdzunaTests(unittest.TestCase):
         self.assertEqual(mapped["employment_type"], "full_time")
         self.assertEqual(mapped["salary"], "50000-70000")
         self.assertEqual(mapped["metadata"]["category"]["tag"], "it-jobs")
+        self.assertNotIn("location_restrictions", mapped["metadata"])
         request_url = mocked.call_args.args[0].full_url
         self.assertIn("what=Python", request_url)
         self.assertIn("where=K%C3%B6ln", request_url)

@@ -6,7 +6,7 @@ from pathlib import Path
 from urllib.parse import quote
 from unittest.mock import patch
 
-from job_agent.ba import BASource
+from job_agent.ba import BAError, BASource
 from job_agent.location import LocationStatus, resolve_location
 from job_agent.normalizer import normalize
 from job_agent.storage import Store
@@ -27,6 +27,7 @@ class SourceAdapterTests(unittest.TestCase):
         with patch("job_agent.nomado24.urllib.request.urlopen", return_value=Response(payload)):
             jobs = Nomado24Source().search("Data Analyst")
         self.assertEqual(jobs[0]["source"], "nomado24"); self.assertEqual(jobs[0]["company"], "Nomado"); self.assertEqual(jobs[0]["arrangement"], "remote")
+        self.assertNotIn("location_restrictions", jobs[0]["metadata"])
         self.assertIsNone(jobs[1]["company"]); self.assertIsNone(jobs[1]["location"])
 
     def test_himalayas_preserves_location_restrictions(self):
@@ -46,6 +47,7 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertEqual(job["source_url"], "https://employer.example/apply?utm_source=bundesagentur")
         self.assertEqual(job["metadata"]["region"], "NRW")
         self.assertEqual(job["metadata"]["country"], "Deutschland")
+        self.assertNotIn("location_restrictions", job["metadata"])
         expected = base64.b64encode(reference.encode()).decode()
         self.assertIn(quote(expected, safe=""), mocked.call_args_list[1].args[0].full_url)
 
@@ -130,6 +132,44 @@ class SourceAdapterTests(unittest.TestCase):
             job = BASource().search("Data Analyst", size=1)[0]
         self.assertEqual(job["source_url"], "https://detail.example/apply")
 
+    def test_ba_keeps_neighbors_when_one_detail_request_fails(self):
+        search = {"ergebnisliste": [
+            {"stellenangebotsTitel": "First Role", "firma": "One", "referenznummer": "good", "stellenlokationen": [{"ort": "Aachen"}]},
+            {"stellenangebotsTitel": "Second Role", "firma": "Two", "referenznummer": "bad", "stellenlokationen": [{"ort": "Berlin"}]},
+        ]}
+        detail = {"stellenangebotsTitel": "First Role", "stellenangebotsBeschreibung": "Full description"}
+        with patch.object(BASource, "_get", side_effect=[search, detail, BAError("detail unavailable")]):
+            source = BASource()
+            jobs = source.search("Data Analyst")
+        self.assertEqual([job["title"] for job in jobs], ["First Role", "Second Role"])
+        self.assertEqual(jobs[1]["location"], "Berlin")
+        self.assertEqual(len(source.partial_errors), 1)
+        self.assertIn("retained available search-result data", source.partial_errors[0])
+
+    def test_ba_skips_malformed_result_and_reports_it(self):
+        search = {"ergebnisliste": [
+            {"referenznummer": "missing-title"},
+            {"stellenangebotsTitel": 123, "referenznummer": "numeric-title"},
+        ]}
+        with patch.object(BASource, "_get", return_value=search):
+            source = BASource()
+            jobs = source.search("Data Analyst")
+        self.assertEqual(jobs, [])
+        self.assertEqual(
+            source.partial_errors,
+            ["search result 1 skipped: missing job title", "search result 2 skipped: missing job title"],
+        )
+
+    def test_ba_rejects_unexpected_search_result_shape(self):
+        with patch.object(BASource, "_get", return_value={"ergebnisliste": "invalid"}):
+            with self.assertRaisesRegex(BAError, "unexpected search-results shape"):
+                BASource().search("Data Analyst")
+
+    def test_ba_search_request_failure_remains_a_source_failure(self):
+        with patch.object(BASource, "_get", side_effect=BAError("search unavailable")):
+            with self.assertRaisesRegex(BAError, "search unavailable"):
+                BASource().search("Data Analyst")
+
     def test_ba_extracts_a_labelled_application_form_link_from_the_description(self):
         reference = "10001-1003580282-S"
         description = "Bewerbungsformular: [Zum Bewerbungsformular](https://recruiting.example.test/apply/42)"
@@ -179,7 +219,8 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertFalse(jobs[0]["metadata"]["worldwide"])
         self.assertEqual(jobs[1]["metadata"]["location_restrictions"], [])
         self.assertTrue(jobs[1]["metadata"]["worldwide"])
-        self.assertTrue(jobs[2]["metadata"]["worldwide"])
+        self.assertNotIn("location_restrictions", jobs[2]["metadata"])
+        self.assertIsNone(jobs[2]["metadata"]["worldwide"])
 
 
 if __name__ == "__main__": unittest.main()

@@ -5,12 +5,13 @@ search and evaluation policies, the security invariants, and how the project is 
 documented. It is written for whoever maintains the code; behaviour that users see is documented in
 `USER_MANUAL.md`.
 
-Run the suite with `python -m unittest discover -s tests`; the CV tests read generated PDFs with
-`pypdf`, so install the test extra first with `python -m pip install -e .[test]`. Three
-CV-compilation tests skip when no `pdflatex` executable is on `PATH`; when a LaTeX installation
-exists but cannot compile - a MiKTeX installation whose setup never completed, for example - they
-fail instead of skipping. Runtime code uses the standard library plus `geonamescache` for offline
-city coordinates; there are no other runtime dependencies.
+Run the suite with `python -m unittest discover -s tests`; install the test extra first with
+`python -m pip install -e .[test]` for `pypdf`. CV content, path, escaping, and heading tests use a
+fake compiler and do not require LaTeX. A separate real-PDF integration test runs only when
+`pdflatex --version` succeeds; an uninitialized MiKTeX installation is treated as unavailable and
+skips that optional test. If the probe succeeds but compilation fails, the integration test fails.
+Runtime code uses the standard library plus `geonamescache` for offline city coordinates; there are
+no other runtime dependencies.
 
 ## Module map
 
@@ -40,16 +41,23 @@ logic.
 ## Architecture and responsibilities
 
 `profile.py` validates the editable factual data. `load_profile` requires `identity`, `education`,
-`skills` and `languages`, at least one education entry and a name on every skill, and, when the
-`professional_experience` key is present, a literal `true`, `false` or `null` (`null` or an absent
-key means unknown; `Profile.has_professional_experience` exposes the three states). `load_config`
+`skills` and `languages`; validates nested string/list/dictionary shapes used by evaluation and CV
+generation; requires at least one education entry and a name on every skill; and, when the
+`professional_experience` key is present, requires a literal `true`, `false` or `null` (`null` or an
+absent key means unknown). Optional project, thesis, contact and compatibility fields are validated
+when present. `load_config`
 requires the list fields `target_roles`, `locations` and `work_arrangements`, a `search_queries`
 object with non-empty `primary` and `secondary` lists, and a `location_preferences` object with a
 non-empty `origin`, a positive `max_distance_km` and a boolean `remote_only_beyond_distance`.
+Configuration lists must contain non-empty strings, and optional `preferred_languages` and
+`maximum_commute_note` values are type-checked.
 
 `normalizer.py` gives incomplete listings a consistent shape without inventing fields: a title is
 mandatory, an unrecognised arrangement becomes `unknown`, seniority falls back to a keyword scan of
-the title, and requirement entries may be strings or objects. Missing source values stay unknown.
+the title, and requirement entries may be strings or objects. For Nomado24 only, a strictly
+list-of-strings `metadata.tags` value participates in the existing known-skill scan. A tag-derived
+skill has `unknown` strength, requirements are deduplicated case-insensitively across fields, and
+malformed tags or tags from other sources are ignored. Missing source values stay unknown.
 
 `models.py` is the internal job representation: `title`, `company`, `location`, `arrangement`,
 `description`, `requirements`, `responsibilities`, `qualifications`, `salary`, `employment_type`,
@@ -65,6 +73,8 @@ shape. `cli.py` coordinates the workflow and stops the whole run with a clear me
 source fails. It also reconfigures standard output and error to UTF-8 with replacement characters,
 so emoji, en dashes and non-Latin titles survive being piped or redirected; closes its SQLite
 connection when a command finishes; and exits quietly when a reader closes the pipe early.
+The `validate` command loads and validates only profile/configuration files and does not construct
+`Store`, so it cannot create or migrate a database.
 
 The dashboard stays thin: `discovery.py` holds the public-search orchestration (query ordering,
 per-source de-duplication, optional error tolerance) and the normalize/evaluate/store pipeline, and
@@ -113,10 +123,23 @@ so listing facts, decisions, applications and audit history stay untouched.
 
 `Store` creates five tables on first use: `jobs`, `evaluations`, `applications`, `cv_versions` and
 `audit_events`. `jobs` keeps the normalized payload plus `discovered_at`, `last_seen_at`, a `viewed`
-flag, a `status` and an optional `rejection_reason`; `source_url` and `external_job_id` are unique,
-which is the entire duplicate-prevention mechanism. A listing seen again updates its payload and
-`last_seen_at` and keeps its decision, and no fuzzy title or company matching is attempted.
+flag, a `status` and an optional `rejection_reason`. Schema version 1 stores `source` directly and
+uses unique `(source, external_job_id)` plus `(source, source_url)` identities. A listing seen again
+updates its normalized payload, indexed identifiers and `last_seen_at` while keeping its decision;
+no fuzzy title or company matching is attempted. The same external ID or URL from different sources
+remains separate.
 `cv_versions` records the generated path and the source-fact categories it was built from.
+
+New databases use schema version 1 directly. When `Store` opens a valid legacy schema, it derives
+`source` from each payload, falling back to `unknown`, validates source-aware identities and
+dependent-row counts, and rebuilds only the `jobs` table inside `BEGIN IMMEDIATE`. Numeric job IDs
+are copied unchanged, so existing job references remain valid. File-backed databases receive a
+SQLite-backup copy named `<database>.pre-identity-v1.bak` before the transaction; in-memory
+databases skip that filesystem step. Any collision, unfamiliar schema, count mismatch, integrity
+failure or other exception before commit leaves the original table intact; failures after the
+backup step also roll back the rebuild and leave that backup available. Post-commit ID/version
+verification is performed separately because those checks cannot be rolled back. Migration is
+version-gated and idempotent.
 
 Job statuses are `discovered`, `saved`, `rejected_by_user`, `applied`, `interview`, `offer`,
 `rejected_by_company` and `withdrawn`; `update_application` accepts only the last five, so a
@@ -215,6 +238,12 @@ query, all `primary` queries before all `secondary` ones, across the selected ad
 de-duplicates results by `(source, external_job_id)` within the run. Every configured query is sent
 to every selected adapter, so the request count of a configured search is queries x adapters.
 
+The documented query strategy keeps the most specific Python title searches in `primary` and adds
+`Backend Developer` and `Software Developer` as broad `secondary` queries. This improves coverage
+for Python vacancies whose titles omit Python without introducing another primary ranking category.
+These queries overlap substantially with one another and with `Python Developer`, so deduplication
+can reduce stored duplicates but cannot reduce adapter calls or source-side rate-limit exposure.
+
 When Adzuna's credentials are absent, `default_sources` substitutes an `UnavailableSource`
 placeholder instead of failing, and `collect` records the skip in `SearchOutcome.skipped`, counts no
 query for it and continues with the remaining adapters. A configured search therefore still runs,
@@ -230,13 +259,16 @@ the limitations listed below.
 
 Source field behaviour, observed against live responses on 2026-09-23 and relied on by the adapters:
 
-- A Himalayas search item publishes `locationRestrictions` (country names, empty for worldwide
-  roles) and `timezoneRestrictions`. Those country names are the only structured geographic
-  eligibility signal the source offers, and `location.resolve_eligibility` interprets them against
-  `employment_eligibility.country_of_residence` from the profile, so an explicitly restricted remote
-  job is excluded while worldwide, Europe and Germany listings keep the existing remote handling.
-  The payload has no `remote`/`isRemote` field, so the adapter leaves the arrangement unknown, and it
-  publishes `minSalary`/`maxSalary`/`companyName`, which the adapter only partly reads.
+- A Himalayas search item may publish `locationRestrictions` and `timezoneRestrictions`. Under the
+  canonical internal contract, an explicitly present empty `locationRestrictions` list means
+  worldwide; an omitted field remains absent and resolves to unknown. No checked-in authoritative
+  source contract confirms that omission means worldwide, so the adapter does not manufacture an
+  empty list. `location.resolve_eligibility` interprets only a valid list of strings. Germany or a
+  recognized inclusive group allows the job, a list containing only recognized foreign countries
+  restricts it, and malformed or ambiguous evidence remains unknown. Timezone restrictions are not
+  country eligibility. A true `remote` or `isRemote` value maps to `remote`; absent or false values
+  leave the arrangement unknown. The adapter publishes `minSalary`/`maxSalary`/`companyName`, which
+  it only partly reads.
 - A Bundesagentur fuer Arbeit Jobsuche search item or detail response may expose the employer
   application link as `externeURL` (capital URL); it is not present for every listing. When neither
   response supplies one, the adapter promotes only a clearly labelled
@@ -244,6 +276,10 @@ Source field behaviour, observed against live responses on 2026-09-23 and relied
   `allianzpartnerUrl` (a bare partner/employer domain) or arbitrary description links, and it does
   not construct a canonical arbeitsagentur.de URL. If no direct vacancy link exists, the detail page
   reports that explicitly.
+- BA search results remain usable when an individual detail request fails. The adapter retains the
+  search-result fields, continues with neighboring results, and exposes safe partial-error messages
+  that search orchestration adds to the normal source-error list. Invalid individual search records
+  are skipped with a warning; a failed search request remains a source-level failure.
 - BA locations may arrive as `stellenlokationen[].adresse` with `plz`, `ort`, `region` and `land`,
   optionally alongside `breite`/`laenge`. The adapter uses `ort` as the canonical city for distance
   resolution and preserves the postal code, street, region, country and coordinates in metadata.
@@ -272,15 +308,28 @@ profile, CV or contact data.
 ## CV generation
 
 `cv.generate` renders `templates/resume.tex` from profile facts and compiles it with `pdflatex`,
-which must be on `PATH`; the tests that exercise the real compiler are skipped when it is absent. It
-writes `output/cv_job_ID.tex` and `output/cv_job_ID.pdf` and records the source-fact categories used
-in `cv_versions`.
+which must be on `PATH` for real PDF output. Content/path tests inspect the generated `.tex` with a
+fake successful compiler; `test_cv_real_pdf_compilation` exercises the real compiler only when
+`pdflatex --version` succeeds. Default CLI and dashboard generation write uniquely named
+`output/cv_job_ID_TIMESTAMP_TOKEN.pdf` and matching `.tex` files, then record the PDF path and
+source-fact categories in `cv_versions`. An explicit CLI `--output` remains an exact user-selected
+path. Existing fixed-name records and files are left unchanged; if an older generation already
+overwrote another artifact, that historical content cannot be reconstructed automatically.
 
 Tailoring is limited to reordering, re-emphasising, shortening and re-wording existing facts, and
-the thesis is always included. Skills and projects are selected by matching the job's requirements
-against the profile, with up to three bullets per project and job-relevant bullets first. The
-generator cannot invent experience, skills, dates or qualifications, and `tests/test_agent.py`
-checks that it does not.
+the thesis is always included. Project ranking is deliberately hierarchical. Direct matches between
+structured project technologies and case-insensitive vacancy requirements, title and technical
+skills are primary. Equal technology evidence preserves profile order, so generic narrative-token
+volume cannot displace it. Only when no project has direct technology evidence does the selector
+rank by descriptive text from candidate/general bullets and then by project names, with profile
+order as the final deterministic tie-breaker. Compound technology names use shared token
+normalization, including treating `learning` and the `learn` part of `scikit-learn` as the same
+signal. At most four project entries are rendered in total, including the thesis; remaining slots
+are filled with the next-best ranked projects, even when fewer projects have strong evidence.
+Sparse or malformed optional project fields are treated as empty. Each selected project keeps up to
+three bullets, with job-relevant bullets first and other available factual bullets filling the
+remaining slots. The generator cannot invent experience, skills, dates or qualifications, and
+`tests/test_agent.py` checks that it does not.
 
 ## Security and privacy invariants
 
@@ -308,7 +357,9 @@ checks that it does not.
 ## Testing strategy
 
 `python -m unittest discover -s tests` runs the suite, and `pip install -e .[test]` adds `pypdf` for
-the CV tests. GitHub Actions runs the same command on Python 3.11 and 3.12.
+the real-PDF integration test. GitHub Actions runs the same command on Python 3.11 and 3.12; it does
+not install LaTeX, so the integration test skips there. The normal unit suite remains independent of
+LaTeX.
 
 The suite uses synthetic fixtures (`tests/support.py`) and temporary directories only: no test reads
 a real profile, search configuration, source CV or database, and no test needs credentials or
@@ -327,13 +378,15 @@ records the evaluation output of the implementation that predates the configurab
 `tests/capture_evaluation_baseline.py` regenerates it and must be run *before* changing evaluation
 behaviour.
 
-Two environment caveats matter when reading results. The three CV-compilation tests skip when no
-`pdflatex` executable is on `PATH`, but a LaTeX installation that is present and cannot compile makes
-them fail rather than skip. `test_reader_closing_the_pipe_early_exits_quietly` in `test_cli_output.py`
+Two environment caveats matter when reading results. The real-PDF integration test skips when
+`pdflatex --version` fails, including an uninitialized MiKTeX installation; if the readiness probe
+succeeds but actual compilation fails, the test fails. The content and heading tests do not use a
+real compiler. `test_reader_closing_the_pipe_early_exits_quietly` in `test_cli_output.py`
 expects empty standard error when the reading end of a pipe closes early; on Windows that write
 surfaces as `[Errno 22] Invalid argument`, the CLI prints argparse usage to standard error, and the
-test fails, so a suite run on that platform is not fully green. Neither caveat appears on the Linux
-CI runner.
+test fails, so a suite run on that platform is not fully green. The closed-pipe caveat does not
+appear on the Linux CI runner; the PDF integration test is skipped there because CI does not
+install LaTeX.
 
 Live checks against the real sources are manual and limited to one query per adapter; no automated
 test contacts a source.
@@ -342,10 +395,14 @@ test contacts a source.
 
 - A failed source ends a CLI search run; only the dashboard tolerates per-source errors. A source
   with no credentials is skipped instead of failing.
+- Country eligibility is only available as structured data from Himalayas under the current
+  adapters. Nomado24, Adzuna and BA retain location, office, company and home-office information,
+  but none of those fields establish where remote employees may legally work. Remote jobs with
+  unknown eligibility remain included with an uncertainty.
 - Requirement extraction is narrow: requirements come from listing data, or from the profile's own
-  skill names found in the listing text when a source provides none, marked mandatory only when
-  wording such as "required" or "must have" appears just before the term. Richer extraction from
-  full descriptions is not implemented.
+  skill names found in listing text and validated Nomado24 string tags, marked mandatory only when
+  wording such as "required" or "must have" appears just before the term. Tag-derived requirements
+  remain unknown-strength, and richer extraction from full descriptions is not implemented.
 - Language requirements are not scored; profile languages are used in CV drafts only.
 - The `missing_requirement` weights are validated but currently unused: no rule can yet prove that a
   requirement the profile does not list is genuinely absent.

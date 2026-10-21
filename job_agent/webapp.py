@@ -18,7 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from . import dashboard, discovery, webui
-from .cv import generate
+from .cv import generate, versioned_output_path
 from .profile import load_config, load_profile
 from .storage import Store
 
@@ -366,7 +366,7 @@ class Dashboard:
         profile = load_profile(self.profile_path)
         with self._store() as store:
             job, evaluation, row = store.get_job(job_id)
-            output = self.output_dir / ("cv_job_%s.pdf" % job_id)
+            output = versioned_output_path(self.output_dir, job_id)
             try:
                 path, facts = generate(job, profile, output)
             except (RuntimeError, OSError) as exc:

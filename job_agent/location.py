@@ -126,8 +126,23 @@ _HOME_ALIASES = {"germany": ("germany", "deutschland", "de", "federal republic o
 
 
 def _matching_group(entry: str) -> bool:
-    normalized = entry.casefold()
-    return any(normalized == group or re.search(rf"\b{re.escape(group)}\b", normalized) for group in _INCLUSIVE_GROUPS)
+    normalized = " ".join(entry.casefold().split())
+    return normalized in _INCLUSIVE_GROUPS
+
+
+@lru_cache(maxsize=1)
+def _known_country_aliases() -> frozenset[str]:
+    aliases = set()
+    try:
+        import geonamescache
+        countries = geonamescache.GeonamesCache().get_countries()
+    except Exception:
+        return frozenset()
+    for code, value in countries.items():
+        aliases.add(str(code).strip().casefold())
+        aliases.add(str(value.get("name", "")).strip().casefold())
+    aliases.discard("")
+    return frozenset(aliases)
 
 
 def home_country_aliases(country: str | None) -> set[str]:
@@ -156,21 +171,30 @@ def _summarize(entries: list[str]) -> str:
 
 
 def resolve_eligibility(metadata: dict, home_country: str | None) -> EligibilityResult:
-    """Interpret structured country restrictions published by a source, such as Himalayas tags.
+    """Interpret a structured list of locations eligible for remote work.
 
-    Only the structured list is used: an empty list means the source marks the role as open
-    worldwide, while a missing field means the source says nothing. The result is UNKNOWN whenever
-    the home country cannot be established, so a job is never excluded on a guess.
+    An explicit empty list means worldwide under the canonical field contract. Missing or malformed
+    evidence is unknown, and any ambiguous entry makes the whole result unknown so a job is never
+    excluded on a guess.
     """
-    if "location_restrictions" not in metadata:
+    if not isinstance(metadata, dict) or "location_restrictions" not in metadata:
+        return EligibilityResult(EligibilityStatus.UNKNOWN)
+    raw_entries = metadata["location_restrictions"]
+    if not isinstance(raw_entries, list) or not all(isinstance(entry, str) for entry in raw_entries):
+        return EligibilityResult(EligibilityStatus.UNKNOWN)
+    entries = [entry.strip() for entry in raw_entries]
+    if any(not entry for entry in entries):
         return EligibilityResult(EligibilityStatus.UNKNOWN)
     aliases = home_country_aliases(home_country)
     if not aliases:
         return EligibilityResult(EligibilityStatus.UNKNOWN)
-    entries = [str(entry).strip() for entry in metadata.get("location_restrictions") or [] if str(entry).strip()]
     if not entries:
         return EligibilityResult(EligibilityStatus.ALLOWED, "worldwide")
-    if any(entry.casefold() in aliases or _matching_group(entry) for entry in entries):
+    normalized = [entry.casefold() for entry in entries]
+    known_countries = _known_country_aliases()
+    if any(entry not in aliases and not _matching_group(entry) and entry not in known_countries for entry in normalized):
+        return EligibilityResult(EligibilityStatus.UNKNOWN, _summarize(entries))
+    if any(entry in aliases or _matching_group(entry) for entry in normalized):
         return EligibilityResult(EligibilityStatus.ALLOWED, _summarize(entries))
     return EligibilityResult(EligibilityStatus.RESTRICTED, _summarize(entries))
 

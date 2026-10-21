@@ -6,6 +6,8 @@ database, so every module builds its data from these helpers instead.
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 from pathlib import Path
 
 SAMPLE_EMAIL = "sample.candidate@example.invalid"
@@ -18,6 +20,30 @@ SAMPLE_SECOND_PROJECT = "Sample Analytics Dashboard"
 
 _THESIS_BULLETS = ["Implemented the query functions in Python.", "Tested portability across two database systems."]
 _THESIS_GENERAL = ["Wrote the thesis describing the approach.", "Benchmarked the query functions.", "Documented the API surface."]
+
+
+def fake_pdflatex(command, cwd, **kwargs):
+    """Return a successful compiler result without requiring LaTeX."""
+    (Path(cwd) / "resume.pdf").write_bytes(b"%PDF-1.4\n% fake test artifact\n")
+    return type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+
+def pdflatex_usable() -> bool:
+    """True only when the compiler exists and its installation responds successfully."""
+    executable = shutil.which("pdflatex")
+    if not executable:
+        return False
+    try:
+        result = subprocess.run(
+            [executable, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
 
 
 def sample_profile() -> dict:

@@ -139,7 +139,8 @@ Successfully installed geonamescache-3.0.2 job-searching-agent-0.1.0 ...
 `geonamescache` is the declared runtime dependency; pip installs it automatically. This step needs an
 internet connection the first time and does not install LaTeX or any other external program. To run
 the automated tests as well, install the test extra once with `python -m pip install -e .[test]` and
-run `python -m unittest discover -s tests`.
+run `python -m unittest discover -s tests`. The normal test suite does not require LaTeX; a separate
+optional real-PDF integration test uses `pdflatex` only when its installation is ready.
 
 ### Initial configuration
 
@@ -173,6 +174,9 @@ In `data/profile.json`:
   rather than assuming either answer.
 - **employment_eligibility** - keep the wording that is true for you; the tool never interprets
   authorization wording as legal advice.
+- `technical_practice` and `availability` are accepted for compatibility with older profile files,
+  but they are not currently rendered in CVs or used by evaluation. Compatibility
+  `technical_practice` values may be strings or lists of strings.
 - Do not put desired roles or preferences in the profile: they belong in the search configuration.
 
 In `data/search_config.json`:
@@ -187,6 +191,10 @@ In `data/search_config.json`:
 - **preferred_languages** - a small secondary ranking signal, never a requirement.
 - **evaluation** (optional) - overrides the scoring weights; see
   [Scoring weights, worked examples and limitations](#scoring-weights-worked-examples-and-limitations).
+
+Validation checks nested profile structures and configuration-list contents, not only whether the
+top-level fields exist. Errors identify the affected field path. `job-agent validate` reads only the
+profile and search configuration; it does not create, open, or migrate the SQLite database.
 
 The local configuration in this working copy currently uses **Aachen** as the origin and **100 km**
 as the maximum geographic distance. The public example remains a generic template, so its example
@@ -392,13 +400,24 @@ a date leaves the date empty.
 
 ### Generating job-specific CVs
 
-After ingesting a job, run `job-agent tailor JOB_ID`. This creates `output/cv_job_JOB_ID.pdf` and the
-exact source `output/cv_job_JOB_ID.tex` locally, and records its source categories. The thesis is
-always included, while other projects and skills are tailored to the job when possible. It selects
-and orders only profile facts; it cannot add skills or professional experience. Drafts currently
-cover education, projects, skills, languages and certifications: a work-experience section is not
-generated yet, even when your profile records professional experience. Review and edit the factual
-sources before using a draft.
+After ingesting a job, run `job-agent tailor JOB_ID`. By default this creates a uniquely named
+`output/cv_job_JOB_ID_TIMESTAMP_TOKEN.pdf` and matching `.tex` source, then records the PDF path and
+source categories. Each generation therefore keeps independent artifacts; an explicit CLI
+`--output` still writes to the exact path you choose. Existing files from older fixed-name
+generations are left unchanged, but any artifact already overwritten before this change cannot be
+reconstructed automatically. The thesis is
+always included. Up to three other projects are selected when a thesis exists, or up to four projects
+when no thesis exists. Direct overlap between structured project technologies and the vacancy's
+technologies and skills is considered first. Projects with equal technical evidence follow their
+order in the profile. When no project has matching technology metadata, the CV uses descriptive
+project text and then project names as fallback evidence. Remaining slots are filled with the
+next-best ranked projects. The CV selects and orders only profile facts; it cannot add skills or
+professional experience. Drafts currently cover education, projects, skills, languages and
+certifications: a work-experience section is not generated yet, even when your profile records
+professional experience. The four-entry limit improves the chance of a one-page draft but does not
+guarantee one page. Review and edit the factual sources before using a draft. Each selected project
+uses up to three factual bullets, with vacancy-relevant bullets first and remaining bullets used to
+fill the available slots.
 
 ### CLI usage and commands
 
@@ -488,6 +507,12 @@ and a title matching a configured **secondary query** earns a smaller one (+8). 
 target titles in `search_queries.primary` and broader or less central titles in
 `search_queries.secondary`.
 
+The documented starter strategy keeps Python-specific searches in `primary` and includes
+`Backend Developer` and `Software Developer` in `secondary`. These broader queries can surface
+Python development roles whose titles omit Python, while placing them in `secondary` keeps the most
+specific title searches first. They also inherit the normal secondary-query title signal when the
+job title contains the configured phrase.
+
 ### Mandatory, preferred, useful and unknown requirements
 
 A listing can state a requirement with a strength, shown in the "Stated as" column of the
@@ -499,6 +524,13 @@ requirements table:
 | `preferred` | The posting would like it. |
 | `useful` | The posting mentions it as a plus. |
 | `unknown` | The wording is unclear, or no strength was given. |
+
+Nomado24 can provide a list of source tags. The application checks those tags only for exact matches
+against skills already recorded in your profile. A match adds an `unknown`-strength requirement; the
+same skill is credited only once even if it also appears in the description or another supported
+field. Generic tags such as "Engineering" are ignored unless that exact phrase is itself one of your
+recorded skills. Malformed tags and category metadata from other sources are not interpreted as
+technologies.
 
 The evaluator compares each requirement with your profile:
 
@@ -527,6 +559,18 @@ Only four findings exclude a job today:
 3. a location resolved **outside** your configured radius, unless the job is explicitly remote and
    `remote_only_beyond_distance` is enabled;
 4. a published country restriction that excludes your country of residence.
+
+Remote arrangement and country eligibility are separate. A job marked remote may still be limited
+to particular countries. A valid structured eligibility list that includes Germany is allowed, a
+list of recognized countries that excludes Germany is restricted, and missing, malformed or
+ambiguous eligibility stays unknown. Explicitly remote jobs with unknown eligibility remain visible
+and receive an uncertainty asking you to verify where you may work from. Their score is not reduced
+only because eligibility is unknown.
+
+The application does not treat an employer's headquarters, office country, the job board's market,
+home-office availability, timezone restrictions, or an incidental country mention in a description
+as proof of remote-work eligibility. Under the current adapters, only a structured, source-provided
+list can establish a country restriction.
 
 If your profile does not record a fact, that fact is never used against the job. An unrecognized
 degree level, an unrecorded professional-experience status, or a job location that cannot be resolved
@@ -647,6 +691,11 @@ product. Keeping both lists short keeps searches fast and reduces the chance of 
 prefer a few well-chosen queries over near-duplicates, and move marginal titles to `secondary`
 rather than adding more primary queries.
 
+`Backend Developer` and `Software Developer` intentionally overlap with the Python-specific searches
+and can return many of the same listings. Deduplication reduces repeated processing from those
+overlaps, but it does not reduce the number of source requests. The broader terms are retained
+because some relevant vacancies do not include Python in their titles.
+
 ### Search workload and source behaviour
 
 - Sources: Adzuna, Nomado24, Himalayas and the German Federal Employment Agency job board ("BA
@@ -662,8 +711,9 @@ rather than adding more primary queries.
   `search_config.json`. It is separate from the Jobs tab source filter, which only filters jobs
   already stored.
 - Duplicates: a listing returned more than once by the same source is processed once when its source
-  and external identifier match; there is no fuzzy title or company matching. Normalized jobs keep
-  their source for diagnostics.
+  and external identifier match. If no external identifier exists, source plus source URL is the
+  fallback identity. The same identifier from different sources remains separate. There is no fuzzy
+  title or company matching.
 - Detail levels differ between sources: Adzuna commonly returns snippets, while BA may request a
   small number of details after the search results. Review listings before treating them as complete
   job descriptions.
@@ -673,9 +723,11 @@ rather than adding more primary queries.
   domains or arbitrary description links, and it does not construct a BA listing URL. If no direct
   vacancy link exists, the job detail page says so. Descriptions containing arbitrary links are
   otherwise shown as plain text.
-- Errors: a CLI search stops with an error if a source fails, while a dashboard search continues
-  through the remaining sources and reports the failures per source. Missing Adzuna credentials are
-  a skip rather than a failure (see [Missing API credentials](#missing-api-credentials)).
+- Errors: a CLI search stops with an error if a source's query fails, while a dashboard search
+  continues through the remaining sources and reports failures per source. BA can retain valid
+  neighboring results when only an individual detail request fails and reports that as a warning.
+  Missing Adzuna credentials are a skip rather than a failure (see
+  [Missing API credentials](#missing-api-credentials)).
 - What is sent: the public query text, an optional location filter and (for Adzuna) your API
   credentials; see [Privacy and local data handling](#privacy-and-local-data-handling) for what never
   leaves your machine.
@@ -707,6 +759,16 @@ Each installation starts with its own empty `data\job_agent.sqlite3`. If you mov
 want your previous history, copy that file yourself, or point the tool at it with
 `job-agent --database <path to the other file> dashboard`. To start over, delete or move the database
 file; everything else keeps working.
+
+Opening a database created before source-aware job identity migrates it automatically. Before the
+schema rebuild, the application creates a SQLite backup named
+`<database-name>.pre-identity-v1.bak` beside the database. The migration preserves numeric job IDs,
+job state and all evaluations, applications, CV-version records and audit events. If source-aware
+identity conflicts are found, migration stops without replacing the original jobs table. File-backed
+migrations create the backup before the schema rebuild; an earlier validation failure leaves the
+original database untouched. Listings previously overwritten by a cross-source collision cannot be
+reconstructed and may need to be discovered again. In-memory databases use the current schema
+directly and create no filesystem backup.
 
 ### Privacy and local data handling
 

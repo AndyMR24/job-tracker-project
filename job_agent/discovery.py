@@ -106,6 +106,12 @@ def collect(sources, *, queries=None, query=None, source=None, location=None, to
                 if progress:
                     progress(outcome.queries_run, total, f"{name} - {text}: failed")
                 continue
+            for warning in getattr(adapter, "partial_errors", ()):
+                message = f"{name} ({text}): {warning}"
+                if message not in outcome.errors:
+                    outcome.errors.append(message)
+                if progress:
+                    progress(outcome.queries_run, total, f"{name} - {text}: partial: {warning}")
             outcome.source_results[name] = outcome.source_results.get(name, 0) + len(results)
             for raw in results:
                 identity = (raw.get("source"), raw.get("external_job_id"))

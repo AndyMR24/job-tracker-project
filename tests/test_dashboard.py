@@ -586,6 +586,27 @@ class HttpTests(DashboardFixture):
         _, pdf = self.get("/jobs/%s/cv" % job_id)
         self.assertIn("fake dashboard cv", pdf)
 
+    def test_repeated_cv_generation_preserves_both_artifact_paths(self):
+        job_id = self.ids["Junior Data Analyst"]
+        generated = []
+
+        def fake_generate(job, profile, output):
+            generated.append((Path(output), ("artifact %s" % len(generated)).encode()))
+            Path(output).parent.mkdir(parents=True, exist_ok=True)
+            Path(output).write_bytes(generated[-1][1])
+            return Path(output), ["projects", "skills"]
+
+        with patch("job_agent.webapp.generate", side_effect=fake_generate):
+            self.post("/jobs/%s/cv" % job_id, {})
+            self.post("/jobs/%s/cv" % job_id, {})
+        versions = self.store().cv_versions(job_id)
+        self.assertEqual(len(versions), 2)
+        self.assertNotEqual(versions[0]["path"], versions[1]["path"])
+        for path, expected in generated:
+            self.assertEqual(path.read_bytes(), expected)
+        _, latest = self.get("/jobs/%s/cv" % job_id)
+        self.assertEqual(latest.encode(), b"artifact 1")
+
     def test_cv_failure_is_reported_without_crashing(self):
         def exploding_generate(job, profile, output):
             raise RuntimeError("pdflatex was not found on PATH.")
@@ -765,6 +786,27 @@ class SearchSkipTests(DashboardFixture):
         for name, adapter in adapters.items():
             with self.subTest(source=name):
                 self.assertEqual([call[0] for call in adapter.calls], expected)
+
+    def test_partial_source_errors_are_visible_without_failing_the_search(self):
+        class PartialAdapter:
+            partial_errors = ["detail for reference x failed; retained available search-result data"]
+
+            def search(self, query, location=None):
+                return [{"title": "Kept", "source": "ba", "external_job_id": "partial-1"}]
+
+        manager = SearchManager(
+            profile_path=self.profile_path,
+            config_path=self.config_path,
+            database_path=self.database,
+            sources_factory=lambda _: {"ba": (PartialAdapter(), True)},
+        )
+        started, message = manager.start(mode="query", query="Data Analyst", source=["ba"])
+        self.assertTrue(started, message)
+        state = self.wait_for_search(manager)
+        self.assertIn("Kept", self.get("/jobs?source=ba")[1])
+        self.assertEqual(len(state["errors"]), 1)
+        self.assertIn("retained available search-result data", state["errors"][0])
+        self.assertIn("1 source error(s)", state["message"])
 
     def test_rejected_adzuna_credentials_are_reported_as_a_source_error(self):
         class RejectedAdapter:

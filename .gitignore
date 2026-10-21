@@ -22,5 +22,6 @@ SOURCE_CV.pdf
 
 # Local runtime data, archived databases and generated output
 *.sqlite3
+*.sqlite3.*
 archive/
 output/

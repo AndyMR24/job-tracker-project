@@ -14,8 +14,10 @@ from job_agent.normalizer import normalize
 from job_agent.profile import EVALUATION_WEIGHT_SCHEMA, Profile, ValidationError, load_config
 
 try:  # works for "python -m unittest discover -s tests" and for pytest
+    from capture_evaluation_baseline import build_document
     from support import evaluation_cases, sample_config, sample_profile, write_config
 except ImportError:  # pragma: no cover - when the tests directory is imported as a package
+    from tests.capture_evaluation_baseline import build_document
     from tests.support import evaluation_cases, sample_config, sample_profile, write_config
 
 BASELINE = Path(__file__).with_name("evaluation_baseline.json")
@@ -23,6 +25,18 @@ CONFIG_EXAMPLE = Path("data/search_config.example.json")
 
 
 class BaselineTests(unittest.TestCase):
+    def test_generator_preserves_existing_document_metadata(self):
+        generated = build_document({
+            "_note": "Maintained note",
+            "_fixtures": "Maintained fixtures",
+            "custom": "preserved",
+            "cases": [],
+        })
+        self.assertEqual(generated["_note"], "Maintained note")
+        self.assertEqual(generated["_fixtures"], "Maintained fixtures")
+        self.assertEqual(generated["custom"], "preserved")
+        self.assertEqual(len(generated["cases"]), len(evaluation_cases()))
+
     def test_omitting_the_block_reproduces_the_captured_baseline(self):
         baseline = json.loads(BASELINE.read_text(encoding="utf-8"))["cases"]
         cases = evaluation_cases()
